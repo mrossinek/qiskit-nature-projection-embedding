@@ -14,16 +14,21 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import scipy.linalg as la
 
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy, Hamiltonian
 from qiskit_nature.second_q.operators import PolynomialTensor
 from qiskit_nature.second_q.operators.tensor_ordering import to_chemist_ordering
-from qiskit_nature.second_q.problems import BaseProblem, ElectronicBasis, ElectronicStructureProblem
+from qiskit_nature.second_q.problems import BaseProblem, ElectronicStructureProblem
+from qiskit_nature.utils import symmetric_orthogonalization
 
 from .base_transformer import BaseTransformer
 from .basis_transformer import BasisTransformer
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectionTransformer(BaseTransformer):
@@ -31,18 +36,24 @@ class ProjectionTransformer(BaseTransformer):
 
     def __init__(
         self,
-        num_elec_A: int,
-        num_bf_A: int,
-        num_fc_elec: int,
-        nfv: int,
+        num_electrons: int,  # the number of electrons in the "active" subsystem A
+        # TODO: make the following number of basis functions
+        num_spatial_orbitals: int,  # the number of spatial orbitals in the "active" subsystem A
+        # TODO: freeze occupied orbitals, treated as spin orbitals
+        num_frozen_electrons: int,  # the number of electrons from subsystem A to freeze ???
+        # TODO: freeze virtual orbitals, treated as spatial orbitals
+        num_frozen_orbitals: int,  # the number of orbitals from subsystem A to freeze ???
         basis_transformer: BasisTransformer,
+        *,
+        do_spade: bool = True,
     ) -> None:
         """TODO."""
-        self.num_elec_A = num_elec_A
-        self.num_bf_A = num_bf_A
-        self.num_fc_elec = num_fc_elec
-        self.nfv = nfv
+        self.num_electrons = num_electrons
+        self.num_spatial_orbitals = num_spatial_orbitals
+        self.num_frozen_electrons = num_frozen_electrons
+        self.num_frozen_orbitals = num_frozen_orbitals
         self.basis_transformer = basis_transformer
+        self.do_spade = do_spade
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
         """TODO."""
@@ -66,209 +77,203 @@ class ProjectionTransformer(BaseTransformer):
     def _transform_electronic_structure_problem(
         self, problem: ElectronicStructureProblem
     ) -> ElectronicStructureProblem:
+        logger.info("")
+        logger.info("Starting with the Manby-Miller embedding")
+        logger.info("F. Manby et al. JCTC, 8, 2564 (2012) ")
+        logger.info("")
+        logger.info("")
+        logger.info("Starting with embedding calculation")
+        logger.info("Doing SCF-in-SCF embedding calculation")
+        logger.info("")
+
+        # TODO: assert AO basis
+
         hamiltonian = problem.hamiltonian
 
-        num_elec_B = sum(problem.num_particles) - self.num_elec_A
-        num_bf_total = self.basis_transformer.coefficients.alpha["+-"].shape[0]
-        num_bf_B = num_bf_total - self.num_bf_A
+        num_elec_env = sum(problem.num_particles) - self.num_electrons
+        nao = self.basis_transformer.coefficients.alpha["+-"].shape[0]
 
-        print("")
-        print("Starting with the Manby-Miller embedding")
-        print("F. Manby et al. JCTC, 8, 2564 (2012) ")
-        print("")
-        print("")
-        print("Starting with embedding calculation")
-        print("Doing SCF-in-SCF embedding calculation")
-        print("")
-
-        # SPADE partition
-        do_spade = True
-
-        nocc_A = self.num_elec_A // 2
-        nocc_B = num_elec_B // 2
-        nocc = nocc_A + nocc_B
-        nao = num_bf_total
+        nocc_a = self.num_electrons // 2
+        nocc_b = num_elec_env // 2
+        nocc = nocc_a + nocc_b
         nmo = problem.num_spatial_orbitals
 
-        num_fc_elec = self.num_fc_elec
-        nfc = num_fc_elec // 2
-        nfv = self.nfv
+        nfc = self.num_frozen_electrons // 2
 
-        C = self.basis_transformer.coefficients.alpha["+-"]
-        C_occ = C[:, :nocc]
-        C_uocc = C[:, nocc:]
+        # TODO: can we deal with unrestricted spin cases?
+        mo_coeff = self.basis_transformer.coefficients.alpha["+-"]
+        mo_coeff_occ = mo_coeff[:, :nocc]
+        mo_coeff_unocc = mo_coeff[:, nocc:]
 
-        Frgment_LMO_1 = np.zeros((num_bf_total, nocc_A))
-        Frgment_LMO_2 = np.zeros((num_bf_total, nocc_B))
+        fragment_1 = np.zeros((nao, nocc_a))
+        fragment_2 = np.zeros((nao, nocc_b))
 
-        N_fragments = 2
-        S = problem.overlap_matrix
-        S[np.abs(S) < 1e-12] = 0.0
-        if do_spade == True:
-            # Doing SPADE partitioning
-            Frgment_LMO_1, Frgment_LMO_2 = self._spade_partition(
-                S, C_occ, N_fragments, nocc, nocc_A, self.num_bf_A
-            )
+        overlap = problem.overlap_matrix
+        overlap[np.abs(overlap) < 1e-12] = 0.0
 
-        C_occ_frozen = Frgment_LMO_2
-        P_frozen = C_occ_frozen.dot(C_occ_frozen.transpose())
-        C_occ_embedded = Frgment_LMO_1
+        # TODO: this cannot be optional, right? Otherwise the fragments remain all-zero...
+        # Maybe the idea was to allow exchanging SPADE with another localization scheme?
+        if self.do_spade:
+            fragment_1, fragment_2 = self._spade_partition(overlap, mo_coeff_occ, nocc_a)
 
-        C_full_system = np.zeros((num_bf_total, nmo))
-        C_full_system[:, :nocc_A] = C_occ_embedded
-        C_full_system[:, nocc_A:nocc] = C_occ_frozen
-        C_full_system[:, nocc:] = C_uocc
+        mo_coeff_occ_frozen = fragment_2
+        density_frozen = mo_coeff_occ_frozen.dot(mo_coeff_occ_frozen.transpose())
+        mo_coeff_occ_embedded = fragment_1
 
-        H_core = hamiltonian.electronic_integrals.alpha["+-"]
+        mo_coeff_full_system = np.zeros((nao, nmo))
+        mo_coeff_full_system[:, :nocc_a] = mo_coeff_occ_embedded
+        mo_coeff_full_system[:, nocc_a:nocc] = mo_coeff_occ_frozen
+        mo_coeff_full_system[:, nocc:] = mo_coeff_unocc
+
+        h_core = hamiltonian.electronic_integrals.alpha["+-"]
         g_ao = to_chemist_ordering(hamiltonian.electronic_integrals.alpha["++--"])
 
-        E_low_level_of_theory = 0.0
-        Fock, E_low_level_of_theory = self._fock_build_A(
-            True, C_full_system, P_frozen, nao, nocc_A, S, H_core, g_ao
+        e_low_level = 0.0
+        fock, e_low_level = self._fock_build_A(
+            True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
         )
 
-        P_of_A = C_occ_embedded.dot(C_occ_embedded.transpose())
-        P_of_A_Guess = P_of_A
+        density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
 
-        diff_SCF_E = 1
-        E_old = 0
-        E_threshold = 1e-7
-        MAXITER = 50
+        e_old = 0
+        e_thres = 1e-7
+        max_iter = 50
 
-        print("")
-        print(" Hartree-Fock for subsystem A Energy")
+        logger.info("")
+        logger.info(" Hartree-Fock for subsystem A Energy")
 
-        E_nuc = hamiltonian.nuclear_repulsion_energy
+        e_nuc = hamiltonian.nuclear_repulsion_energy
 
-        for scf_iter in range(1, MAXITER + 1):
+        for scf_iter in range(1, max_iter + 1):
 
-            energies, C_of_A_full = la.eigh(Fock, S)
-            C_occ_embedded = C_of_A_full[:, :nocc_A]
+            _, mo_coeff_a_full = la.eigh(fock, overlap)
+            mo_coeff_occ_embedded = mo_coeff_a_full[:, :nocc_a]
 
-            P_of_A = C_occ_embedded.dot(C_occ_embedded.transpose())
+            density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
 
-            C_full_system[:, :nocc_A] = C_occ_embedded
-            C_full_system[:, nocc_A:nocc] = C_occ_frozen
-            C_full_system[:, nocc:] = C_uocc
+            mo_coeff_full_system[:, :nocc_a] = mo_coeff_occ_embedded
+            mo_coeff_full_system[:, nocc_a:nocc] = mo_coeff_occ_frozen
+            mo_coeff_full_system[:, nocc:] = mo_coeff_unocc
 
-            Fock, E_low_level_of_theory = self._fock_build_A(
-                True, C_full_system, P_frozen, nao, nocc_A, S, H_core, g_ao
+            fock, e_low_level = self._fock_build_A(
+                True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
             )
 
-            E_new_A = np.einsum("pq,pq->", 2 * H_core, P_of_A, optimize=True)
-            E_new_A += np.einsum("pq,pqrs,rs->", 2 * P_of_A, g_ao, P_of_A, optimize=True)
-            E_new_A -= np.einsum("pq,prqs,rs->", 1 * P_of_A, g_ao, P_of_A, optimize=True)
+            e_new_a = np.einsum("pq,pq->", 2 * h_core, density_a, optimize=True)
+            e_new_a += np.einsum("pq,pqrs,rs->", 2 * density_a, g_ao, density_a, optimize=True)
+            e_new_a -= np.einsum("pq,prqs,rs->", 1 * density_a, g_ao, density_a, optimize=True)
 
-            E_new_A += E_low_level_of_theory + E_nuc
+            e_new_a += e_low_level + e_nuc
 
-            print(
-                "SCF Iteration %3d: Energy = %4.16f dE = % 1.5E"
-                % (scf_iter, E_new_A, E_new_A - E_old)
-            )
+            logger.info(f"SCF Iteration {scf_iter}: Energy = {e_new_a} dE = {e_new_a - e_old}")
 
             # SCF Converged?
-            if abs(E_new_A - E_old) < E_threshold:
+            if abs(e_new_a - e_old) < e_thres:
                 break
-            E_old = E_new_A
+            e_old = e_new_a
 
-            if scf_iter == MAXITER:
+            if scf_iter == max_iter:
                 raise Exception("Maximum number of SCF iterations exceeded.")
 
         # Post iterations
-        print("\nSCF converged.")
-        print("Final SCF A-in-B Energy: %.14f [Eh]" % (E_new_A))
+        logger.info("\nSCF converged.")
+        logger.info(f"Final SCF A-in-B Energy: {e_new_a} [Eh]")
 
         # post convergence wrapup
-        Projector = np.dot(S, np.dot(P_frozen, S))
+        projector = np.dot(overlap, np.dot(density_frozen, overlap))
 
-        Fock, E_low_level_of_theory = self._fock_build_A(
-            False, C_full_system, P_frozen, nao, nocc_A, S, H_core, g_ao
+        fock, e_low_level = self._fock_build_A(
+            False, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
         )
 
-        occ_orbital_energy_mat = np.dot(C_occ_embedded.transpose(), np.dot(Fock, C_occ_embedded))
-        occ_orbital_energy = np.diag(occ_orbital_energy_mat)
-
         mu = 1.0e8
-        Fock -= mu * Projector
+        fock -= mu * projector
 
-        P_full = P_of_A + P_frozen
-        C_occ_projected = np.dot(P_full, np.dot(S, C_uocc))
+        density_full = density_a + density_frozen
+        mo_coeff_projected = np.dot(density_full, np.dot(overlap, mo_coeff_unocc))
 
-        if np.linalg.norm(C_occ_projected) < 1e-05:
-            print("occupied and unoccupied are orthogonal")
+        if np.linalg.norm(mo_coeff_projected) < 1e-05:
+            logger.info("occupied and unoccupied are orthogonal")
             nonorthogonal = False
         else:
-            print("occupied and unoccupied are NOT orthogonal")
+            logger.info("occupied and unoccupied are NOT orthogonal")
             nonorthogonal = True
 
         # orthogonalization procedure
         if nonorthogonal == True:
-            C_uocc_projected = C_uocc - C_occ_projected
+            mo_coeff_unocc_projected = mo_coeff_unocc - mo_coeff_projected
 
             eval, evec = np.linalg.eigh(
-                np.dot(C_uocc_projected.transpose(), np.dot(S, C_uocc_projected))
+                np.dot(
+                    mo_coeff_unocc_projected.transpose(), np.dot(overlap, mo_coeff_unocc_projected)
+                )
             )
 
             for i in range(evec.shape[0]):
                 eval[i] = eval[i] ** (-0.5)
             eval = np.diag(eval)
 
-            C_uocc = np.dot(C_uocc_projected, np.dot(evec, eval))
+            mo_coeff_unocc = np.dot(mo_coeff_unocc_projected, np.dot(evec, eval))
 
-            eval_Fock, evec_Fock = np.linalg.eigh(np.dot(C_uocc.transpose(), np.dot(Fock, C_uocc)))
-            C_uocc = np.dot(C_uocc, evec_Fock)
+            _, evec_fock = np.linalg.eigh(
+                np.dot(mo_coeff_unocc.transpose(), np.dot(fock, mo_coeff_unocc))
+            )
+            mo_coeff_unocc = np.dot(mo_coeff_unocc, evec_fock)
 
         # doing concentric local virtuals
         zeta = 1
         nvir = nmo - nocc
         nvir_act = nvir
         nvir_frozen = 0
-        C_uocc_prime, nvir_act, nvir_frozen = self._get_truncated_virtuals(
-            S, S, C_uocc, self.num_bf_A, Fock, zeta, S
+        mo_coeff_unocc_prime, nvir_act, nvir_frozen = self._get_truncated_virtuals(
+            overlap, overlap, mo_coeff_unocc, fock, zeta
         )
-        # print("nvir_act = %g" %(nvir_act))
-        # print("nvir_frozen = %g" % (nvir_frozen))
+        logger.debug(f"nvir_act = {nvir_act}")
+        logger.debug(f"nvir_frozen = {nvir_frozen}")
 
-        C_excld_v = C_uocc_prime[:, nvir_act:]
-        proj_excluded_virts = np.dot(S, np.dot(C_excld_v, np.dot(C_excld_v.transpose(), S)))
-        Fock += mu * proj_excluded_virts
-
-        C_occ_embedded_cols = C_occ_embedded.shape[1]
-        C_full_system_truncated = np.zeros(
-            (C_occ_embedded.shape[0], C_occ_embedded.shape[1] + nvir_act)
+        C_excld_v = mo_coeff_unocc_prime[:, nvir_act:]
+        proj_excluded_virts = np.dot(
+            overlap, np.dot(C_excld_v, np.dot(C_excld_v.transpose(), overlap))
         )
-        C_full_system_truncated[:, :C_occ_embedded_cols] = C_occ_embedded
-        C_full_system_truncated[:, C_occ_embedded_cols:] = C_uocc_prime[:, :nvir_act]
+        fock += mu * proj_excluded_virts
 
-        nmo_A_tmp = C_full_system_truncated.shape[1] - nfv
-        C_full_system_truncated = C_full_system_truncated[:, nfc:nmo_A_tmp]
-        nmo_A = C_full_system_truncated.shape[1]
-        print("nmo_A = ", nmo_A)
-        nocc_A -= nfc
+        mo_coeff_embedded_ncols = mo_coeff_occ_embedded.shape[1]
+        mo_coeff_full_system_truncated = np.zeros(
+            (mo_coeff_occ_embedded.shape[0], mo_coeff_occ_embedded.shape[1] + nvir_act)
+        )
+        mo_coeff_full_system_truncated[:, :mo_coeff_embedded_ncols] = mo_coeff_occ_embedded
+        mo_coeff_full_system_truncated[:, mo_coeff_embedded_ncols:] = mo_coeff_unocc_prime[
+            :, :nvir_act
+        ]
+
+        nmo_a_tmp = mo_coeff_full_system_truncated.shape[1] - self.num_frozen_orbitals
+        mo_coeff_full_system_truncated = mo_coeff_full_system_truncated[:, nfc:nmo_a_tmp]
+        nmo_a = mo_coeff_full_system_truncated.shape[1]
+        logger.debug(f"nmo_a = {nmo_a}")
+        nocc_a -= nfc
 
         orbital_energy_mat = np.dot(
-            C_full_system_truncated.transpose(), np.dot(Fock, C_full_system_truncated)
+            mo_coeff_full_system_truncated.transpose(), np.dot(fock, mo_coeff_full_system_truncated)
         )
         orbital_energy = np.diag(orbital_energy_mat)
-        print(orbital_energy)
-        print("")
-        print("starting with the WFN-in-SCF calculation")
-        nbasis_e_truncated = C_full_system_truncated.shape[1]
+        logger.info(orbital_energy)
+        logger.info("")
+        logger.info("starting with the WFN-in-SCF calculation")
 
         ###Storing integrals to FCIDUMP
 
         g_mo_sf = PolynomialTensor.einsum(
             {"prsq,pi,qj,rk,sl->iklj": ("++--", *("+-",) * 4, "++--")},
             PolynomialTensor({"++--": g_ao}),
-            *(PolynomialTensor({"+-": C_full_system_truncated}, validate=False),) * 4,
+            *(PolynomialTensor({"+-": mo_coeff_full_system_truncated}, validate=False),) * 4,
         )["++--"]
 
         # AO2MO of one-body
         h_mo_sf = np.einsum(
             "pi,pq,qj -> ij",
-            C_full_system_truncated,
-            H_core,
-            C_full_system_truncated,
+            mo_coeff_full_system_truncated,
+            h_core,
+            mo_coeff_full_system_truncated,
             optimize=True,
         )
 
@@ -276,217 +281,208 @@ class ProjectionTransformer(BaseTransformer):
         f = np.diag(orbital_energy)
         h_eff = np.zeros((f.shape[0], f.shape[1]))
         h_eff += f
-        h_eff -= np.einsum("pqii -> pq", 2.0 * g_mo_sf[:, :, :nocc_A, :nocc_A], optimize=True)
-        h_eff += np.einsum("piqi -> pq", g_mo_sf[:, :nocc_A, :, :nocc_A], optimize=True)
+        h_eff -= np.einsum("pqii -> pq", 2.0 * g_mo_sf[:, :, :nocc_a, :nocc_a], optimize=True)
+        h_eff += np.einsum("piqi -> pq", g_mo_sf[:, :nocc_a, :, :nocc_a], optimize=True)
 
-        # temporary for validation
-        # f_mo_sf = self._get_fock_sf(h_eff, g_mo_sf, nocc_A)
-        # nmo_A = C_full_system_truncated.shape[1]
+        e_new_a_only = np.einsum("ii->", 2 * h_mo_sf[:nocc_a, :nocc_a], optimize=True)
+        e_new_a_only += np.einsum(
+            "iijj->", 2 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
+        )
+        e_new_a_only -= np.einsum(
+            "ijij->", 1 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
+        )
+        logger.info("Final RHF A Energy        : %.14f [Eh]" % (e_new_a_only))
+        e_new_a_only += e_nuc
+        logger.info("Final RHF A Energy tot    : %.14f [Eh]" % (e_new_a_only))
 
-        E_new_A_only = np.einsum("ii->", 2 * h_mo_sf[:nocc_A, :nocc_A], optimize=True)
-        E_new_A_only += np.einsum(
-            "iijj->", 2 * g_mo_sf[:nocc_A, :nocc_A, :nocc_A, :nocc_A], optimize=True
+        e_new_a_only = np.einsum("ii->", 2 * h_eff[:nocc_a, :nocc_a], optimize=True)
+        e_new_a_only += np.einsum(
+            "iijj->", 2 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
         )
-        E_new_A_only -= np.einsum(
-            "ijij->", 1 * g_mo_sf[:nocc_A, :nocc_A, :nocc_A, :nocc_A], optimize=True
+        e_new_a_only -= np.einsum(
+            "ijij->", 1 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
         )
-        print("Final RHF A Energy        : %.14f [Eh]" % (E_new_A_only))
-        E_new_A_only += E_nuc
-        print("Final RHF A Energy tot    : %.14f [Eh]" % (E_new_A_only))
-
-        E_new_A_only = np.einsum("ii->", 2 * h_eff[:nocc_A, :nocc_A], optimize=True)
-        E_new_A_only += np.einsum(
-            "iijj->", 2 * g_mo_sf[:nocc_A, :nocc_A, :nocc_A, :nocc_A], optimize=True
-        )
-        E_new_A_only -= np.einsum(
-            "ijij->", 1 * g_mo_sf[:nocc_A, :nocc_A, :nocc_A, :nocc_A], optimize=True
-        )
-        print("Final RHF A eff Energy        : %.14f [Eh]" % (E_new_A_only))
-        shift = -1.0 * float(E_new_A_only)
-        E_new_A_only += E_nuc
-        print("Final RHF A eff Energy tot    : %.14f [Eh]" % (E_new_A_only))
+        logger.info("Final RHF A eff Energy        : %.14f [Eh]" % (e_new_a_only))
+        shift = -1.0 * float(e_new_a_only)
+        e_new_a_only += e_nuc
+        logger.info("Final RHF A eff Energy tot    : %.14f [Eh]" % (e_new_a_only))
 
         new_hamiltonian = ElectronicEnergy.from_raw_integrals(h_eff, g_mo_sf)
-        new_hamiltonian.nuclear_repulsion_energy = float(E_new_A)
+        new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
         new_hamiltonian.constants["ProjectionTransformer"] = shift
 
         result = ElectronicStructureProblem(new_hamiltonian)
-        result.num_particles = self.num_elec_A - num_fc_elec
-        result.num_spatial_orbitals = nmo_A
+        result.num_particles = self.num_electrons - self.num_frozen_electrons
+        result.num_spatial_orbitals = nmo_a
 
         g_mo_sf = g_mo_sf.transpose(0, 2, 1, 3)
 
-        e_ij = orbital_energy[:nocc_A]
-        e_ab = orbital_energy[nocc_A:]
+        e_ij = orbital_energy[:nocc_a]
+        e_ab = orbital_energy[nocc_a:]
 
         # -1 means that it is an unknown dimension and we want numpy to figure it out.
         e_denom = 1 / (
             e_ij.reshape(-1, 1, 1, 1) - e_ab.reshape(-1, 1, 1) + e_ij.reshape(-1, 1) - e_ab
         )
 
-        g_vvoo_ee = g_mo_sf[nocc_A:, nocc_A:, :nocc_A, :nocc_A]
-        g_oovv_ee = g_mo_sf[:nocc_A, :nocc_A, nocc_A:, nocc_A:]
+        g_vvoo_ee = g_mo_sf[nocc_a:, nocc_a:, :nocc_a, :nocc_a]
+        g_oovv_ee = g_mo_sf[:nocc_a, :nocc_a, nocc_a:, nocc_a:]
         t2_ee = np.einsum("iajb,abij->abij", e_denom, g_vvoo_ee, optimize=True)
 
-        MP2_ee = np.einsum("ikac,acik->", g_oovv_ee, t2_ee, optimize=True)
+        e_mp2 = np.einsum("ikac,acik->", g_oovv_ee, t2_ee, optimize=True)
         # +g_ee(ijab) * t2_ee(abij) * 0.5
-        MP2_ee += np.einsum("ijab,abij->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
+        e_mp2 += np.einsum("ijab,abij->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
         # -g_ee(ijab) * t2_ee(abji) * 0.5
-        MP2_ee -= np.einsum("ijab,abji->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
+        e_mp2 -= np.einsum("ijab,abji->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
         # +g_ee(klcd) * t2_ee(cdkl) * 0.5
-        MP2_ee += np.einsum("klcd,cdkl->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
+        e_mp2 += np.einsum("klcd,cdkl->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
         # -g_ee(klcd) * t2_ee(cdlk) * 0.5
-        MP2_ee -= np.einsum("klcd,cdlk->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
+        e_mp2 -= np.einsum("klcd,cdlk->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
 
-        print("MP2_ee = %4.10f" % (MP2_ee))
+        logger.info("e_mp2 = %4.10f" % (e_mp2))
 
         return result
 
-    def _spade_partition(self, S, C_occ, Nfrags, nocc, nocc_A, nao_A):
-        print("")
-        print("Doing SPADE partitioning")
-        print("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
-        print("")
-
-        S_05_inv = self._symmetric_orthogonalization(S)
-
-        C_tmp = np.dot(S_05_inv, C_occ)
-        C_tmp2 = C_tmp[:nao_A, :]
-
-        U, sigma, Vt = np.linalg.svd(C_tmp2, full_matrices=True)
-        V = Vt.transpose()
-
-        return np.dot(C_occ, V[:, :nocc_A]), np.dot(C_occ, V[:, nocc_A:])
-
-    def _symmetric_orthogonalization(self, S):
-        D, V = np.linalg.eigh(S)
-        for i in range(V.shape[0]):
-            D[i] = D[i] ** 0.5
-
-        D = np.diag(D)
-        X = np.dot(V, np.dot(D, V.transpose()))
-        return X
-
-    def _fock_build_A(self, project, C_full_system, P_frozen, nao, nocc_A, S, H_core, I):
+    def _fock_build_A(
+        self, project, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
+    ):
         # construction of the Fock matrix
         # Fragment A contribution
-        C_of_A = np.zeros((nao, nao))
-        C_of_A[:, :nocc_A] = C_full_system[:, :nocc_A]
+        mo_coeff_a = np.zeros((nao, nao))
+        mo_coeff_a[:, :nocc_a] = mo_coeff_full_system[:, :nocc_a]
 
-        P_of_A = C_of_A.dot(C_of_A.transpose())
-        J_of_A = np.einsum("pqrs,rs->pq", I, P_of_A, optimize=True)
-        K_of_A = np.einsum("prqs,rs->pq", I, P_of_A, optimize=True)
-        Fock = H_core + 2 * J_of_A - K_of_A
+        density_a = mo_coeff_a.dot(mo_coeff_a.transpose())
+        coulomb_a = np.einsum("pqrs,rs->pq", g_ao, density_a, optimize=True)
+        exchange_a = np.einsum("prqs,rs->pq", g_ao, density_a, optimize=True)
+        fock = h_core + 2 * coulomb_a - exchange_a
 
-        P_full = P_of_A + P_frozen
-        J_full = np.einsum("pqrs,rs->pq", I, P_full, optimize=True)
-        K_full = np.einsum("prqs,rs->pq", I, P_full, optimize=True)
-        Fock_tot_low_level = H_core + 2 * J_full - K_full
+        density_full = density_a + density_frozen
+        coulomb_full = np.einsum("pqrs,rs->pq", g_ao, density_full, optimize=True)
+        exchange_full = np.einsum("prqs,rs->pq", g_ao, density_full, optimize=True)
+        fock_tot_low_level = h_core + 2 * coulomb_full - exchange_full
 
-        Fock_of_A_low_level = H_core + 2 * J_of_A - K_of_A
+        fock_a_low_level = h_core + 2 * coulomb_a - exchange_a
 
-        Fock += 2 * J_full - K_full - (2 * J_of_A - K_of_A)
+        fock += 2 * coulomb_full - exchange_full - (2 * coulomb_a - exchange_a)
 
-        E_low_level_of_theory = np.einsum(
-            "pq,pq->", (H_core + Fock_tot_low_level), P_full, optimize=True
+        e_low_level = np.einsum(
+            "pq,pq->", (h_core + fock_tot_low_level), density_full, optimize=True
         )
-        E_low_level_of_theory -= np.einsum(
-            "pq,pq->", (H_core + Fock_of_A_low_level), P_of_A, optimize=True
-        )
+        e_low_level -= np.einsum("pq,pq->", (h_core + fock_a_low_level), density_a, optimize=True)
 
         if project == True:
-            Projector = np.identity(nao) - S.dot(P_frozen)
-            Fock = np.dot(Projector, np.dot(Fock, Projector.transpose()))
+            projector = np.identity(nao) - overlap.dot(density_frozen)
+            fock = np.dot(projector, np.dot(fock, projector.transpose()))
 
-        return Fock, E_low_level_of_theory
+        return fock, e_low_level
 
-    def _get_truncated_virtuals(
-        self, working_basis, projection_basis, C_uocc, nao_A, Fock, zeta, S
-    ):
+    def _get_truncated_virtuals(self, working_basis, projection_basis, mo_coeff_unocc, fock, zeta):
 
-        print("")
-        print("doing truncated local virtuals ")
-        print("    Concentric localization and truncation for virtuals    ")
-        print("     D. Claudino and N. Mayhall, JCTC, 15, 6085 (2019)     ")
-        print("")
+        logger.info("")
+        logger.info("doing truncated local virtuals ")
+        logger.info("    Concentric localization and truncation for virtuals    ")
+        logger.info("     D. Claudino and N. Mayhall, JCTC, 15, 6085 (2019)     ")
+        logger.info("")
 
-        nao = S.shape[0]
-        projection_basis_embed = projection_basis[:nao_A, :nao_A]
+        projection_basis_embed = projection_basis[
+            : self.num_spatial_orbitals, : self.num_spatial_orbitals
+        ]
 
-        working_basis_red = working_basis[:nao_A, :]
+        working_basis_red = working_basis[: self.num_spatial_orbitals, :]
 
         projection_basis_embed_inv = np.linalg.inv(projection_basis_embed)
-        C_uocc_prime = np.dot(projection_basis_embed_inv, np.dot(working_basis_red, C_uocc))
-        C_uocc_p_projection_basisWB_C_uocc = np.dot(
-            C_uocc_prime.transpose(), np.dot(working_basis_red, C_uocc)
+        mo_coeff_unocc_prime = np.dot(
+            projection_basis_embed_inv, np.dot(working_basis_red, mo_coeff_unocc)
         )
 
-        U, sigma, Vt = np.linalg.svd(C_uocc_p_projection_basisWB_C_uocc, full_matrices=True)
-        V = Vt.transpose()
+        _, _, v_t = np.linalg.svd(
+            np.dot(mo_coeff_unocc_prime.transpose(), np.dot(working_basis_red, mo_coeff_unocc)),
+            full_matrices=True,
+        )
+        v = v_t.transpose()
 
-        C_uocc_new = np.dot(C_uocc, V[:, :nao_A])
-        C_uocc_rem = np.dot(C_uocc, V[:, nao_A:])
+        mo_coeff_unocc_new = np.dot(mo_coeff_unocc, v[:, : self.num_spatial_orbitals])
+        mo_coeff_unocc_rem = np.dot(mo_coeff_unocc, v[:, self.num_spatial_orbitals :])
 
-        C_uocc_new = C_uocc_new
-
-        for iter in range(zeta - 1):
-            F_new_rem = np.dot(C_uocc_new.transpose(), np.dot(Fock, C_uocc_rem))
-            U, sigma, Vt = np.linalg.svd(F_new_rem, full_matrices=True)
-            V = Vt.transpose()
+        for _ in range(zeta - 1):
+            fock_new_term = np.dot(mo_coeff_unocc_new.transpose(), np.dot(fock, mo_coeff_unocc_rem))
+            _, _, v_t = np.linalg.svd(fock_new_term, full_matrices=True)
+            v = v_t.transpose()
 
             # update
-            C_uocc_rem_ncols = C_uocc_rem.shape[1]
-            C_uocc_cur_ncols = C_uocc_cur.shape[1]
-            if C_uocc_rem_ncols > C_uocc_cur_ncols:
-                C_uocc_cur = np.dot(C_uocc_rem, V[:, :C_uocc_cur_ncols])
-                C_uocc_rem = np.dot(C_uocc_rem, V[:, C_uocc_cur_ncols:])
+            mo_coeff_unocc_rem_ncols = mo_coeff_unocc_rem.shape[1]
+            mo_coeff_unocc_cur_ncols = mo_coeff_unocc_cur.shape[1]
+            if mo_coeff_unocc_rem_ncols > mo_coeff_unocc_cur_ncols:
+                mo_coeff_unocc_cur = np.dot(mo_coeff_unocc_rem, v[:, :mo_coeff_unocc_cur_ncols])
+                mo_coeff_unocc_rem = np.dot(mo_coeff_unocc_rem, v[:, mo_coeff_unocc_cur_ncols:])
 
             else:
-                C_uocc_cur = np.dot(C_uocc_rem, V)
-                C_uocc_rem = np.zeros((C_uocc_rem.shape[0], C_uocc_rem.shape[1]))
+                mo_coeff_unocc_cur = np.dot(mo_coeff_unocc_rem, v)
+                mo_coeff_unocc_rem = np.zeros(
+                    (mo_coeff_unocc_rem.shape[0], mo_coeff_unocc_rem.shape[1])
+                )
 
-            C_uocc_new_nrows = C_uocc_new.shape[0]
-            C_uocc_new_ncols = C_uocc_new.shape[1]
-            C_uocc_cur_ncols = C_uocc_cur.shape[1]
-            C_uocc_new_TMP = np.zeros((C_uocc_new_nrows, C_uocc_new_ncols + C_uocc_cur_ncols))
-            C_uocc_new_TMP[:, :C_uocc_new_ncols] = C_uocc_new
-            C_uocc_new_TMP[:, C_uocc_new_ncols:] = C_uocc_cur
+            mo_coeff_unocc_new_nrows = mo_coeff_unocc_new.shape[0]
+            mo_coeff_unocc_new_ncols = mo_coeff_unocc_new.shape[1]
+            mo_coeff_unocc_cur_ncols = mo_coeff_unocc_cur.shape[1]
+            mo_coeff_unocc_new_tmp = np.zeros(
+                (mo_coeff_unocc_new_nrows, mo_coeff_unocc_new_ncols + mo_coeff_unocc_cur_ncols)
+            )
+            mo_coeff_unocc_new_tmp[:, :mo_coeff_unocc_new_ncols] = mo_coeff_unocc_new
+            mo_coeff_unocc_new_tmp[:, mo_coeff_unocc_new_ncols:] = mo_coeff_unocc_cur
 
-            C_uocc_new = C_uocc_new_TMP
+            mo_coeff_unocc_new = mo_coeff_unocc_new_tmp
 
-        print("Pseudocanonicalizing the selected and excluded virtuals separately")
+        logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
 
-        F_new_virtvirt = np.dot(C_uocc_new.transpose(), np.dot(Fock, C_uocc_new))
+        fock_new_virtvirt = np.dot(mo_coeff_unocc_new.transpose(), np.dot(fock, mo_coeff_unocc_new))
 
-        e_F_new_virtvirt, U_new = np.linalg.eigh(F_new_virtvirt)
+        _, u_new = np.linalg.eigh(fock_new_virtvirt)
 
-        C_uocc_new = np.dot(C_uocc_new, U_new)
+        mo_coeff_unocc_new = np.dot(mo_coeff_unocc_new, u_new)
 
-        C_uocc_rem_ncols = C_uocc_rem.shape[1]
-        if C_uocc_rem_ncols != 0:
-            F_rem_virtvirt = np.dot(C_uocc_rem.transpose(), np.dot(Fock, C_uocc_rem))
-            eigs_F_rem_virtvirt, U_rem = np.linalg.eigh(F_rem_virtvirt)
+        mo_coeff_unocc_rem_ncols = mo_coeff_unocc_rem.shape[1]
+        if mo_coeff_unocc_rem_ncols != 0:
+            fock_rem_virtvirt = np.dot(
+                mo_coeff_unocc_rem.transpose(), np.dot(fock, mo_coeff_unocc_rem)
+            )
+            _, u_rem = np.linalg.eigh(fock_rem_virtvirt)
 
-            C_uocc_rem = np.dot(C_uocc_rem, U_rem)
-            C_uocc_new_nrows = C_uocc_new.shape[0]
-            C_uocc_new_ncols = C_uocc_new.shape[1]
-            C_uocc_rem_ncols = C_uocc_rem.shape[1]
-            C_uocc_TMP = np.zeros((C_uocc_new_nrows, C_uocc_new_ncols + C_uocc_rem_ncols))
-            C_uocc_TMP[:, :C_uocc_new_ncols] = C_uocc_new
-            C_uocc_TMP[:, C_uocc_new_ncols:] = C_uocc_rem
-            C_uocc = C_uocc_TMP
+            mo_coeff_unocc_rem = np.dot(mo_coeff_unocc_rem, u_rem)
+            mo_coeff_unocc_new_nrows = mo_coeff_unocc_new.shape[0]
+            mo_coeff_unocc_new_ncols = mo_coeff_unocc_new.shape[1]
+            mo_coeff_unocc_rem_ncols = mo_coeff_unocc_rem.shape[1]
+            mo_coeff_unocc_tmp = np.zeros(
+                (mo_coeff_unocc_new_nrows, mo_coeff_unocc_new_ncols + mo_coeff_unocc_rem_ncols)
+            )
+            mo_coeff_unocc_tmp[:, :mo_coeff_unocc_new_ncols] = mo_coeff_unocc_new
+            mo_coeff_unocc_tmp[:, mo_coeff_unocc_new_ncols:] = mo_coeff_unocc_rem
+            mo_coeff_unocc = mo_coeff_unocc_tmp
         else:
-            C_uocc = C_uocc_new
+            mo_coeff_unocc = mo_coeff_unocc_new
 
-        nvir_act = C_uocc_new.shape[1]
-        nvir_frozen = C_uocc.shape[1] - nvir_act
+        nvir_act = mo_coeff_unocc_new.shape[1]
+        nvir_frozen = mo_coeff_unocc.shape[1] - nvir_act
 
-        return C_uocc, nvir_act, nvir_frozen
+        return mo_coeff_unocc, nvir_act, nvir_frozen
 
-    def _get_fock_sf(self, h, g, nocc):
-        fock = np.zeros((h.shape[0], h.shape[1]))
-        fock += h
-        fock += np.einsum("pqii -> pq", 2.0 * g[:, :, :nocc, :nocc], optimize=True)
-        fock -= np.einsum("piqi -> pq", g[:, :nocc, :, :nocc], optimize=True)
+    def _spade_partition(self, overlap: np.ndarray, mo_coeff_occ: np.ndarray, nocc_a: int):
+        logger.info("")
+        logger.info("Doing SPADE partitioning")
+        logger.info("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
+        logger.info("")
 
-        return fock
+        # 1. use symmetric orthogonalization on the overlap matrix
+        symm_orth = symmetric_orthogonalization(overlap)
+
+        # 2. change the MO basis to be orthogonal and reasonably localized
+        mo_coeff_tmp = np.dot(symm_orth, mo_coeff_occ)
+
+        # 3. select the active sector
+        mo_coeff_tmp = mo_coeff_tmp[: self.num_spatial_orbitals, :]
+
+        # 4. use SVD to find the final rotation matrix
+        _, _, rot_T = np.linalg.svd(mo_coeff_tmp, full_matrices=True)
+        rot = rot_T.transpose()
+
+        return np.dot(mo_coeff_occ, rot[:, :nocc_a]), np.dot(mo_coeff_occ, rot[:, nocc_a:])
