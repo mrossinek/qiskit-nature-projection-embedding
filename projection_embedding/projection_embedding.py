@@ -20,9 +20,10 @@ import numpy as np
 import scipy.linalg as la
 
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy, Hamiltonian
-from qiskit_nature.second_q.operators import PolynomialTensor
+from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
 from qiskit_nature.second_q.operators.tensor_ordering import to_chemist_ordering
 from qiskit_nature.second_q.problems import BaseProblem, ElectronicStructureProblem
+from qiskit_nature.second_q.properties import ElectronicDensity
 from qiskit_nature.utils import symmetric_orthogonalization
 
 from .base_transformer import BaseTransformer
@@ -127,7 +128,7 @@ class ProjectionTransformer(BaseTransformer):
 
         e_low_level = 0.0
         fock, e_low_level = self._fock_build_A(
-            True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
+            True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
         )
 
         density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
@@ -153,7 +154,7 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_full_system[:, nocc:] = mo_coeff_unocc
 
             fock, e_low_level = self._fock_build_A(
-                True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
+                True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
             )
 
             e_new_a = np.einsum("pq,pq->", 2 * h_core, density_a, optimize=True)
@@ -180,7 +181,7 @@ class ProjectionTransformer(BaseTransformer):
         projector = np.dot(overlap, np.dot(density_frozen, overlap))
 
         fock, e_low_level = self._fock_build_A(
-            False, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
+            False, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
         )
 
         mu = 1.0e8
@@ -341,37 +342,37 @@ class ProjectionTransformer(BaseTransformer):
         return result
 
     def _fock_build_A(
-        self, project, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, h_core, g_ao
+        self, project, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
     ):
-        # construction of the Fock matrix
-        # Fragment A contribution
         mo_coeff_a = np.zeros((nao, nao))
         mo_coeff_a[:, :nocc_a] = mo_coeff_full_system[:, :nocc_a]
 
-        density_a = mo_coeff_a.dot(mo_coeff_a.transpose())
-        coulomb_a = np.einsum("pqrs,rs->pq", g_ao, density_a, optimize=True)
-        exchange_a = np.einsum("prqs,rs->pq", g_ao, density_a, optimize=True)
-        fock = h_core + 2 * coulomb_a - exchange_a
+        density_a = ElectronicDensity.from_raw_integrals(mo_coeff_a.dot(mo_coeff_a.T))
+        density_tot = density_a + ElectronicDensity.from_raw_integrals(density_frozen)
 
-        density_full = density_a + density_frozen
-        coulomb_full = np.einsum("pqrs,rs->pq", g_ao, density_full, optimize=True)
-        exchange_full = np.einsum("prqs,rs->pq", g_ao, density_full, optimize=True)
-        fock_tot_low_level = h_core + 2 * coulomb_full - exchange_full
+        fock_a = hamiltonian.fock(density_a)
+        fock_tot = hamiltonian.fock(density_tot)
 
-        fock_a_low_level = h_core + 2 * coulomb_a - exchange_a
-
-        fock += 2 * coulomb_full - exchange_full - (2 * coulomb_a - exchange_a)
-
-        e_low_level = np.einsum(
-            "pq,pq->", (h_core + fock_tot_low_level), density_full, optimize=True
+        e_low_level = ElectronicIntegrals.einsum(
+            {"ij,ji": ("+-", "+-", "")},
+            fock_tot + hamiltonian.electronic_integrals.one_body,
+            density_tot,
         )
-        e_low_level -= np.einsum("pq,pq->", (h_core + fock_a_low_level), density_a, optimize=True)
+        e_low_level -= ElectronicIntegrals.einsum(
+            {"ij,ji": ("+-", "+-", "")},
+            fock_a + hamiltonian.electronic_integrals.one_body,
+            density_a,
+        )
+
+        # TODO: check if the simplification done here (yielding in simply fock_tot_low_level being
+        # used) can also be done in the DFT scenario
+        fock_mat = fock_tot.alpha["+-"]
 
         if project == True:
             projector = np.identity(nao) - overlap.dot(density_frozen)
-            fock = np.dot(projector, np.dot(fock, projector.transpose()))
+            fock_mat = np.dot(projector, np.dot(fock_mat, projector.transpose()))
 
-        return fock, e_low_level
+        return fock_mat, e_low_level.alpha[""]
 
     def _get_truncated_virtuals(self, working_basis, projection_basis, mo_coeff_unocc, fock, zeta):
 
