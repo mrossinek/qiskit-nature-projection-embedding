@@ -37,21 +37,18 @@ class ProjectionTransformer(BaseTransformer):
     def __init__(
         self,
         num_electrons: int,  # the number of electrons in the "active" subsystem A
-        # TODO: make the following number of basis functions
-        num_spatial_orbitals: int,  # the number of spatial orbitals in the "active" subsystem A
-        # TODO: freeze occupied orbitals, treated as spin orbitals
-        num_frozen_electrons: int,  # the number of electrons from subsystem A to freeze ???
-        # TODO: freeze virtual orbitals, treated as spatial orbitals
-        num_frozen_orbitals: int,  # the number of orbitals from subsystem A to freeze ???
+        num_basis_functions: int,  # the number of basis functions in the "active" subsystem A
+        num_frozen_occupied_orbitals: int,  # the number of occupied orbitals to freeze
+        num_frozen_virtual_orbitals: int,  # the number of virtual orbitals to freeze
         basis_transformer: BasisTransformer,
         *,
         do_spade: bool = True,
     ) -> None:
         """TODO."""
         self.num_electrons = num_electrons
-        self.num_spatial_orbitals = num_spatial_orbitals
-        self.num_frozen_electrons = num_frozen_electrons
-        self.num_frozen_orbitals = num_frozen_orbitals
+        self.num_basis_functions = num_basis_functions
+        self.num_frozen_occupied_orbitals = num_frozen_occupied_orbitals
+        self.num_frozen_virtual_orbitals = num_frozen_virtual_orbitals
         self.basis_transformer = basis_transformer
         self.do_spade = do_spade
 
@@ -98,7 +95,7 @@ class ProjectionTransformer(BaseTransformer):
         nocc = nocc_a + nocc_b
         nmo = problem.num_spatial_orbitals
 
-        nfc = self.num_frozen_electrons // 2
+        nfc = self.num_frozen_occupied_orbitals
 
         # TODO: can we deal with unrestricted spin cases?
         mo_coeff = self.basis_transformer.coefficients.alpha["+-"]
@@ -246,7 +243,7 @@ class ProjectionTransformer(BaseTransformer):
             :, :nvir_act
         ]
 
-        nmo_a_tmp = mo_coeff_full_system_truncated.shape[1] - self.num_frozen_orbitals
+        nmo_a_tmp = mo_coeff_full_system_truncated.shape[1] - self.num_frozen_virtual_orbitals
         mo_coeff_full_system_truncated = mo_coeff_full_system_truncated[:, nfc:nmo_a_tmp]
         nmo_a = mo_coeff_full_system_truncated.shape[1]
         logger.debug(f"nmo_a = {nmo_a}")
@@ -312,7 +309,7 @@ class ProjectionTransformer(BaseTransformer):
         new_hamiltonian.constants["ProjectionTransformer"] = shift
 
         result = ElectronicStructureProblem(new_hamiltonian)
-        result.num_particles = self.num_electrons - self.num_frozen_electrons
+        result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
         result.num_spatial_orbitals = nmo_a
 
         g_mo_sf = g_mo_sf.transpose(0, 2, 1, 3)
@@ -385,10 +382,10 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("")
 
         projection_basis_embed = projection_basis[
-            : self.num_spatial_orbitals, : self.num_spatial_orbitals
+            : self.num_basis_functions, : self.num_basis_functions
         ]
 
-        working_basis_red = working_basis[: self.num_spatial_orbitals, :]
+        working_basis_red = working_basis[: self.num_basis_functions, :]
 
         projection_basis_embed_inv = np.linalg.inv(projection_basis_embed)
         mo_coeff_unocc_prime = np.dot(
@@ -401,8 +398,8 @@ class ProjectionTransformer(BaseTransformer):
         )
         v = v_t.transpose()
 
-        mo_coeff_unocc_new = np.dot(mo_coeff_unocc, v[:, : self.num_spatial_orbitals])
-        mo_coeff_unocc_rem = np.dot(mo_coeff_unocc, v[:, self.num_spatial_orbitals :])
+        mo_coeff_unocc_new = np.dot(mo_coeff_unocc, v[:, : self.num_basis_functions])
+        mo_coeff_unocc_rem = np.dot(mo_coeff_unocc, v[:, self.num_basis_functions :])
 
         for _ in range(zeta - 1):
             fock_new_term = np.dot(mo_coeff_unocc_new.transpose(), np.dot(fock, mo_coeff_unocc_rem))
@@ -479,7 +476,7 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff_tmp = np.dot(symm_orth, mo_coeff_occ)
 
         # 3. select the active sector
-        mo_coeff_tmp = mo_coeff_tmp[: self.num_spatial_orbitals, :]
+        mo_coeff_tmp = mo_coeff_tmp[: self.num_basis_functions, :]
 
         # 4. use SVD to find the final rotation matrix
         _, _, rot_T = np.linalg.svd(mo_coeff_tmp, full_matrices=True)

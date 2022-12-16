@@ -112,7 +112,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(14, 10, 10, 8, basis_trafo)
+        trafo = ProjectionTransformer(14, 10, 5, 8, basis_trafo)
         problem = trafo.transform(problem)
 
         with self.subTest("alpha coefficients"):
