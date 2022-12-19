@@ -128,9 +128,12 @@ class ProjectionTransformer(BaseTransformer):
         )
 
         e_low_level = 0.0
-        fock, e_low_level = self._fock_build_a(
-            True, density_a, density_frozen, nao, overlap, hamiltonian
+        fock_, e_low_level = self._fock_build_a(
+            density_a, density_frozen, hamiltonian
         )
+
+        projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
+        fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
 
         e_old = 0
         e_thres = 1e-7
@@ -150,17 +153,18 @@ class ProjectionTransformer(BaseTransformer):
                 mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
             )
 
-            fock, e_low_level = self._fock_build_a(
-                True, density_a, density_frozen, nao, overlap, hamiltonian
+            fock_, e_low_level = self._fock_build_a(
+                density_a, density_frozen, hamiltonian
             )
 
-            tmp = ElectronicIntegrals.einsum(
+            projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
+            fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
+
+            e_new_a = ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
                 hamiltonian.electronic_integrals.one_body + hamiltonian.fock(density_a),
                 density_a,
-            )
-
-            e_new_a = tmp.alpha.get("", 0.0) + tmp.beta.get("", 0.0) + tmp.beta_alpha.get("", 0.0)
+            ).alpha[""]
 
             e_new_a += e_low_level + e_nuc
 
@@ -181,9 +185,11 @@ class ProjectionTransformer(BaseTransformer):
         # post convergence wrapup
         projector = np.dot(overlap, np.dot(density_frozen.alpha["+-"], overlap))
 
-        fock, e_low_level = self._fock_build_a(
-            False, density_a, density_frozen, nao, overlap, hamiltonian
+        fock_, e_low_level = self._fock_build_a(
+            density_a, density_frozen, hamiltonian
         )
+
+        fock = fock_.alpha["+-"]
 
         mu = 1.0e8
         fock -= mu * projector
@@ -342,7 +348,7 @@ class ProjectionTransformer(BaseTransformer):
 
         return result
 
-    def _fock_build_a(self, project, density_a, density_frozen, nao, overlap, hamiltonian):
+    def _fock_build_a(self, density_a, density_frozen, hamiltonian):
         density_tot = density_a + density_frozen
 
         fock_a = hamiltonian.fock(density_a)
@@ -363,13 +369,8 @@ class ProjectionTransformer(BaseTransformer):
 
         # NOTE: the following is written as it is because this reflects better how DFT will differ
         fock_final = fock_a + (fock_tot - h_core) - (fock_a - h_core)
-        fock_mat = fock_final.alpha["+-"]
 
-        if project == True:
-            projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
-            fock_mat = np.dot(projector, np.dot(fock_mat, projector.transpose()))
-
-        return fock_mat, e_low_level.alpha[""]
+        return fock_final, e_low_level.alpha[""]
 
     def _get_truncated_virtuals(self, working_basis, projection_basis, mo_coeff_unocc, fock, zeta):
 
