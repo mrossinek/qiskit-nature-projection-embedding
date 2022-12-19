@@ -114,23 +114,17 @@ class ProjectionTransformer(BaseTransformer):
         if self.do_spade:
             fragment_1, fragment_2 = self._spade_partition(overlap, mo_coeff_occ, nocc_a)
 
-        mo_coeff_occ_frozen = fragment_2
         density_frozen = ElectronicDensity.from_raw_integrals(
-            mo_coeff_occ_frozen.dot(mo_coeff_occ_frozen.transpose())
+            fragment_2.dot(fragment_2.transpose())
         )
-        mo_coeff_occ_embedded = fragment_1
 
         h_core = hamiltonian.electronic_integrals.alpha["+-"]
         g_ao = to_chemist_ordering(hamiltonian.electronic_integrals.alpha["++--"])
 
-        density_a = ElectronicDensity.from_raw_integrals(
-            mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
-        )
+        density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
 
         e_low_level = 0.0
-        fock_, e_low_level = self._fock_build_a(
-            density_a, density_frozen, hamiltonian
-        )
+        fock_, e_low_level = self._fock_build_a(density_a, density_frozen, hamiltonian)
 
         projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
         fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
@@ -147,15 +141,11 @@ class ProjectionTransformer(BaseTransformer):
         for scf_iter in range(1, max_iter + 1):
 
             _, mo_coeff_a_full = la.eigh(fock, overlap)
-            mo_coeff_occ_embedded = mo_coeff_a_full[:, :nocc_a]
+            fragment_1 = mo_coeff_a_full[:, :nocc_a]
 
-            density_a = ElectronicDensity.from_raw_integrals(
-                mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
-            )
+            density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
 
-            fock_, e_low_level = self._fock_build_a(
-                density_a, density_frozen, hamiltonian
-            )
+            fock_, e_low_level = self._fock_build_a(density_a, density_frozen, hamiltonian)
 
             projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
             fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
@@ -185,9 +175,7 @@ class ProjectionTransformer(BaseTransformer):
         # post convergence wrapup
         projector = np.dot(overlap, np.dot(density_frozen.alpha["+-"], overlap))
 
-        fock_, e_low_level = self._fock_build_a(
-            density_a, density_frozen, hamiltonian
-        )
+        fock_, e_low_level = self._fock_build_a(density_a, density_frozen, hamiltonian)
 
         fock = fock_.alpha["+-"]
 
@@ -242,11 +230,11 @@ class ProjectionTransformer(BaseTransformer):
         )
         fock += mu * proj_excluded_virts
 
-        mo_coeff_embedded_ncols = mo_coeff_occ_embedded.shape[1]
+        mo_coeff_embedded_ncols = fragment_1.shape[1]
         mo_coeff_full_system_truncated = np.zeros(
-            (mo_coeff_occ_embedded.shape[0], mo_coeff_occ_embedded.shape[1] + nvir_act)
+            (fragment_1.shape[0], fragment_1.shape[1] + nvir_act)
         )
-        mo_coeff_full_system_truncated[:, :mo_coeff_embedded_ncols] = mo_coeff_occ_embedded
+        mo_coeff_full_system_truncated[:, :mo_coeff_embedded_ncols] = fragment_1
         mo_coeff_full_system_truncated[:, mo_coeff_embedded_ncols:] = mo_coeff_unocc_prime[
             :, :nvir_act
         ]
