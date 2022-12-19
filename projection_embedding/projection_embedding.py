@@ -91,18 +91,13 @@ class ProjectionTransformer(BaseTransformer):
 
         num_elec_env = sum(problem.num_particles) - self.num_electrons
         nao = self.basis_transformer.coefficients.alpha["+-"].shape[0]
-
         nocc_a = self.num_electrons // 2
         nocc_b = num_elec_env // 2
         nocc = nocc_a + nocc_b
-        nmo = problem.num_spatial_orbitals
-
-        nfc = self.num_frozen_occupied_orbitals
 
         # TODO: can we deal with unrestricted spin cases?
         mo_coeff = self.basis_transformer.coefficients.alpha["+-"]
-        mo_coeff_occ = mo_coeff[:, :nocc]
-        mo_coeff_vir = mo_coeff[:, nocc:]
+        mo_coeff_occ, mo_coeff_vir = np.hsplit(mo_coeff, [nocc])
 
         fragment_1 = np.zeros((nao, nocc_a))
         fragment_2 = np.zeros((nao, nocc_b))
@@ -214,37 +209,30 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_vir,
             self.num_basis_functions,
             fock,
-            zeta=1,
+            zeta=1,  # TODO: make configurable and figure out what exactly zeta is meant to do?
         )
         logger.debug("nvir_act = %s", nvir_act)
         logger.debug("nvir_frozen = %s", nvir_frozen)
 
-        mo_coeff_excld_v = mo_coeff_vir_pb[:, nvir_act:]
+        mo_coeff_vir_act, mo_coeff_vir_frozen = np.hsplit(mo_coeff_vir_pb, [nvir_act])
         proj_excluded_virts = np.dot(
-            overlap, np.dot(mo_coeff_excld_v, np.dot(mo_coeff_excld_v.transpose(), overlap))
+            overlap, np.dot(mo_coeff_vir_frozen, np.dot(mo_coeff_vir_frozen.transpose(), overlap))
         )
         fock += mu * proj_excluded_virts
 
-        mo_coeff_embedded_ncols = fragment_1.shape[1]
-        mo_coeff_full_system_truncated = np.zeros(
-            (fragment_1.shape[0], fragment_1.shape[1] + nvir_act)
-        )
-        mo_coeff_full_system_truncated[:, :mo_coeff_embedded_ncols] = fragment_1
-        mo_coeff_full_system_truncated[:, mo_coeff_embedded_ncols:] = mo_coeff_vir_pb[:, :nvir_act]
-
-        nmo_a_tmp = mo_coeff_full_system_truncated.shape[1] - self.num_frozen_virtual_orbitals
-        mo_coeff_full_system_truncated = mo_coeff_full_system_truncated[:, nfc:nmo_a_tmp]
-        nmo_a = mo_coeff_full_system_truncated.shape[1]
-        logger.debug("nmo_a = %s", nmo_a)
-        nocc_a -= nfc
+        max_orb = -self.num_frozen_virtual_orbitals if self.num_frozen_virtual_orbitals else None
+        mo_coeff_full_system_truncated = np.hstack((fragment_1, mo_coeff_vir_act))[
+            :, self.num_frozen_occupied_orbitals : max_orb
+        ]
+        logger.debug("nmo_a = %s", mo_coeff_full_system_truncated.shape[1])
+        nocc_a -= self.num_frozen_occupied_orbitals
 
         orbital_energy_mat = np.dot(
             mo_coeff_full_system_truncated.transpose(), np.dot(fock, mo_coeff_full_system_truncated)
         )
         orbital_energy = np.diag(orbital_energy_mat)
+        logger.info("orbital energies")
         logger.info(orbital_energy)
-        logger.info("")
-        logger.info("starting with the WFN-in-SCF calculation")
 
         ###Storing integrals to FCIDUMP
 
@@ -304,7 +292,7 @@ class ProjectionTransformer(BaseTransformer):
 
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
-        result.num_spatial_orbitals = nmo_a
+        result.num_spatial_orbitals = mo_coeff_full_system_truncated.shape[1]
 
         return result
 
@@ -354,8 +342,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     )
     # Eq. (10b)
     v = v_t.transpose()
-    v_span = v[:, :num_bf]
-    v_kern = v[:, num_bf:]
+    v_span, v_kern = np.hsplit(v, [num_bf])
 
     # Eq. (10c)
     mo_coeff_vir_new = np.dot(mo_coeff_vir, v_span)
@@ -372,8 +359,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
 
         # Eq. (12b)
         v = v_t.transpose()
-        v_span = v[:, : mo_coeff_vir_cur.shape[1]]
-        v_kern = v[:, mo_coeff_vir_cur.shape[1] :]
+        v_span, v_kern = np.hsplit(v, [mo_coeff_vir_cur.shape[1]])
 
         # Eq. (12c-12d)
         if mo_coeff_vir_kern.shape[1] > mo_coeff_vir_cur.shape[1]:
@@ -428,7 +414,7 @@ def _spade_partition(overlap: np.ndarray, mo_coeff_occ: np.ndarray, num_bf: int,
     mo_coeff_tmp = mo_coeff_tmp[:num_bf, :]
 
     # 4. use SVD to find the final rotation matrix
-    _, _, rot_t = np.linalg.svd(mo_coeff_tmp, full_matrices=True)
-    rot = rot_t.transpose()
+    _, _, rot = np.linalg.svd(mo_coeff_tmp, full_matrices=True)
+    left, right = np.hsplit(rot.transpose(), [nocc_a])
 
-    return np.dot(mo_coeff_occ, rot[:, :nocc_a]), np.dot(mo_coeff_occ, rot[:, nocc_a:])
+    return np.dot(mo_coeff_occ, left), np.dot(mo_coeff_occ, right)
