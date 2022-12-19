@@ -118,17 +118,14 @@ class ProjectionTransformer(BaseTransformer):
         density_frozen = mo_coeff_occ_frozen.dot(mo_coeff_occ_frozen.transpose())
         mo_coeff_occ_embedded = fragment_1
 
-        mo_coeff_full_system = np.zeros((nao, nmo))
-        mo_coeff_full_system[:, :nocc_a] = mo_coeff_occ_embedded
-        mo_coeff_full_system[:, nocc_a:nocc] = mo_coeff_occ_frozen
-        mo_coeff_full_system[:, nocc:] = mo_coeff_unocc
-
         h_core = hamiltonian.electronic_integrals.alpha["+-"]
         g_ao = to_chemist_ordering(hamiltonian.electronic_integrals.alpha["++--"])
 
+        density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
+
         e_low_level = 0.0
         fock, e_low_level = self._fock_build_a(
-            True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
+            True, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
         )
 
         density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
@@ -149,12 +146,8 @@ class ProjectionTransformer(BaseTransformer):
 
             density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
 
-            mo_coeff_full_system[:, :nocc_a] = mo_coeff_occ_embedded
-            mo_coeff_full_system[:, nocc_a:nocc] = mo_coeff_occ_frozen
-            mo_coeff_full_system[:, nocc:] = mo_coeff_unocc
-
             fock, e_low_level = self._fock_build_a(
-                True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
+                True, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
             )
 
             e_new_a = np.einsum("pq,pq->", 2 * h_core, density_a, optimize=True)
@@ -181,7 +174,7 @@ class ProjectionTransformer(BaseTransformer):
         projector = np.dot(overlap, np.dot(density_frozen, overlap))
 
         fock, e_low_level = self._fock_build_a(
-            False, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
+            False, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
         )
 
         mu = 1.0e8
@@ -342,12 +335,9 @@ class ProjectionTransformer(BaseTransformer):
         return result
 
     def _fock_build_a(
-        self, project, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
+        self, project, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
     ):
-        mo_coeff_a = np.zeros((nao, nao))
-        mo_coeff_a[:, :nocc_a] = mo_coeff_full_system[:, :nocc_a]
-
-        density_a = ElectronicDensity.from_raw_integrals(mo_coeff_a.dot(mo_coeff_a.T))
+        density_a = ElectronicDensity.from_raw_integrals(density_a)
         density_tot = density_a + ElectronicDensity.from_raw_integrals(density_frozen)
 
         fock_a = hamiltonian.fock(density_a)
