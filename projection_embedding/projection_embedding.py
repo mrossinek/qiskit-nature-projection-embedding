@@ -121,14 +121,14 @@ class ProjectionTransformer(BaseTransformer):
         h_core = hamiltonian.electronic_integrals.alpha["+-"]
         g_ao = to_chemist_ordering(hamiltonian.electronic_integrals.alpha["++--"])
 
-        density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
+        density_a = ElectronicDensity.from_raw_integrals(
+            mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
+        )
 
         e_low_level = 0.0
         fock, e_low_level = self._fock_build_a(
-            True, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
+            True, density_a, density_frozen, nao, overlap, hamiltonian
         )
-
-        density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
 
         e_old = 0
         e_thres = 1e-7
@@ -144,15 +144,21 @@ class ProjectionTransformer(BaseTransformer):
             _, mo_coeff_a_full = la.eigh(fock, overlap)
             mo_coeff_occ_embedded = mo_coeff_a_full[:, :nocc_a]
 
-            density_a = mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
-
-            fock, e_low_level = self._fock_build_a(
-                True, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
+            density_a = ElectronicDensity.from_raw_integrals(
+                mo_coeff_occ_embedded.dot(mo_coeff_occ_embedded.transpose())
             )
 
-            e_new_a = np.einsum("pq,pq->", 2 * h_core, density_a, optimize=True)
-            e_new_a += np.einsum("pq,pqrs,rs->", 2 * density_a, g_ao, density_a, optimize=True)
-            e_new_a -= np.einsum("pq,prqs,rs->", 1 * density_a, g_ao, density_a, optimize=True)
+            fock, e_low_level = self._fock_build_a(
+                True, density_a, density_frozen, nao, overlap, hamiltonian
+            )
+
+            tmp = ElectronicIntegrals.einsum(
+                {"ij,ji": ("+-", "+-", "")},
+                hamiltonian.electronic_integrals.one_body + hamiltonian.fock(density_a),
+                density_a,
+            )
+
+            e_new_a = tmp.alpha.get("", 0.0) + tmp.beta.get("", 0.0) + tmp.beta_alpha.get("", 0.0)
 
             e_new_a += e_low_level + e_nuc
 
@@ -174,13 +180,13 @@ class ProjectionTransformer(BaseTransformer):
         projector = np.dot(overlap, np.dot(density_frozen, overlap))
 
         fock, e_low_level = self._fock_build_a(
-            False, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
+            False, density_a, density_frozen, nao, overlap, hamiltonian
         )
 
         mu = 1.0e8
         fock -= mu * projector
 
-        density_full = density_a + density_frozen
+        density_full = density_a.alpha["+-"] + density_frozen
         mo_coeff_projected = np.dot(density_full, np.dot(overlap, mo_coeff_unocc))
 
         if np.linalg.norm(mo_coeff_projected) < 1e-05:
@@ -334,10 +340,7 @@ class ProjectionTransformer(BaseTransformer):
 
         return result
 
-    def _fock_build_a(
-        self, project, density_a, density_frozen, nao, nocc_a, overlap, hamiltonian
-    ):
-        density_a = ElectronicDensity.from_raw_integrals(density_a)
+    def _fock_build_a(self, project, density_a, density_frozen, nao, overlap, hamiltonian):
         density_tot = density_a + ElectronicDensity.from_raw_integrals(density_frozen)
 
         fock_a = hamiltonian.fock(density_a)
