@@ -304,18 +304,9 @@ class ProjectionTransformer(BaseTransformer):
             from qiskit_nature.second_q.algorithms.initial_points.mp2_initial_point import (
                 _compute_mp2,
             )
-            from qiskit_nature.second_q.operators.tensor_ordering import (
-                IndexType,
-                to_chemist_ordering,
-            )
 
             _, e_mp2 = _compute_mp2(
-                nocc_a,
-                to_chemist_ordering(
-                    new_hamil.electronic_integrals.two_body.alpha["++--"],
-                    index_order=IndexType.PHYSICIST,
-                ),
-                orbital_energy,
+                nocc_a, new_hamil.electronic_integrals.two_body.alpha["++--"], orbital_energy
             )
 
             logger.info("e_mp2 = %4.10f", e_mp2)
