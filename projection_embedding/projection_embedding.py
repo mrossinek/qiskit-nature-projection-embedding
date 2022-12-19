@@ -196,18 +196,16 @@ class ProjectionTransformer(BaseTransformer):
 
             eigval, eigvec = np.linalg.eigh(
                 np.dot(
-                    mo_coeff_unocc_projected.transpose(), np.dot(overlap, mo_coeff_unocc_projected)
+                    mo_coeff_unocc_projected.T, np.dot(overlap, mo_coeff_unocc_projected)
                 )
             )
 
-            for i in range(eigvec.shape[0]):
-                eigval[i] = eigval[i] ** (-0.5)
-            eigval = np.diag(eigval)
+            eigval = np.linalg.inv(np.diag(np.sqrt(eigval)))
 
             mo_coeff_unocc = np.dot(mo_coeff_unocc_projected, np.dot(eigvec, eigval))
 
             _, eigvec_fock = np.linalg.eigh(
-                np.dot(mo_coeff_unocc.transpose(), np.dot(fock, mo_coeff_unocc))
+                np.dot(mo_coeff_unocc.T, np.dot(fock, mo_coeff_unocc))
             )
             mo_coeff_unocc = np.dot(mo_coeff_unocc, eigvec_fock)
 
@@ -219,12 +217,12 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff_unocc_prime, nvir_act, nvir_frozen = self._get_truncated_virtuals(
             overlap, overlap, mo_coeff_unocc, fock, zeta
         )
-        logger.debug(f"nvir_act = {nvir_act}")
-        logger.debug(f"nvir_frozen = {nvir_frozen}")
+        logger.debug("nvir_act = %s", nvir_act)
+        logger.debug("nvir_frozen = %s", nvir_frozen)
 
-        C_excld_v = mo_coeff_unocc_prime[:, nvir_act:]
+        mo_coeff_excld_v = mo_coeff_unocc_prime[:, nvir_act:]
         proj_excluded_virts = np.dot(
-            overlap, np.dot(C_excld_v, np.dot(C_excld_v.transpose(), overlap))
+            overlap, np.dot(mo_coeff_excld_v, np.dot(mo_coeff_excld_v.transpose(), overlap))
         )
         fock += mu * proj_excluded_virts
 
@@ -240,7 +238,7 @@ class ProjectionTransformer(BaseTransformer):
         nmo_a_tmp = mo_coeff_full_system_truncated.shape[1] - self.num_frozen_virtual_orbitals
         mo_coeff_full_system_truncated = mo_coeff_full_system_truncated[:, nfc:nmo_a_tmp]
         nmo_a = mo_coeff_full_system_truncated.shape[1]
-        logger.debug(f"nmo_a = {nmo_a}")
+        logger.debug("nmo_a = %s", nmo_a)
         nocc_a -= nfc
 
         orbital_energy_mat = np.dot(
@@ -259,7 +257,7 @@ class ProjectionTransformer(BaseTransformer):
             ElectronicIntegrals.from_raw_integrals(mo_coeff_full_system_truncated, validate=False),
         )
 
-        new_hamil = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
+        new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
 
         only_a_mat = np.diag(
             [1.0 if i < nocc_a else 0.0 for i in range(mo_coeff_full_system_truncated.shape[1])]
@@ -269,7 +267,7 @@ class ProjectionTransformer(BaseTransformer):
         e_new_a_only = float(
             ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
-                new_hamil.electronic_integrals.one_body + new_hamil.fock(only_a),
+                new_hamiltonian.electronic_integrals.one_body + new_hamiltonian.fock(only_a),
                 only_a,
             ).alpha[""]
         )
@@ -277,27 +275,22 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final RHF A Energy        : %.14f [Eh]", e_new_a_only)
         logger.info("Final RHF A Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
 
-        new_hamil.electronic_integrals -= new_hamil.fock(only_a)
-        new_hamil.electronic_integrals += ElectronicIntegrals.from_raw_integrals(
+        new_hamiltonian.electronic_integrals -= new_hamiltonian.fock(only_a)
+        new_hamiltonian.electronic_integrals += ElectronicIntegrals.from_raw_integrals(
             np.diag(orbital_energy)
         )
 
         e_new_a_only = ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            new_hamil.electronic_integrals.one_body + new_hamil.fock(only_a),
+            new_hamiltonian.electronic_integrals.one_body + new_hamiltonian.fock(only_a),
             only_a,
         ).alpha[""]
 
         logger.info("Final RHF A eff Energy        : %.14f [Eh]", e_new_a_only)
         logger.info("Final RHF A eff Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
 
-        new_hamiltonian = new_hamil
         new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
         new_hamiltonian.constants["ProjectionTransformer"] = -1.0 * float(e_new_a_only)
-
-        result = ElectronicStructureProblem(new_hamiltonian)
-        result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
-        result.num_spatial_orbitals = nmo_a
 
         if logger.isEnabledFor(logging.INFO):
 
@@ -306,10 +299,15 @@ class ProjectionTransformer(BaseTransformer):
             )
 
             _, e_mp2 = _compute_mp2(
-                nocc_a, new_hamil.electronic_integrals.two_body.alpha["++--"], orbital_energy
+                nocc_a, new_hamiltonian.electronic_integrals.two_body.alpha["++--"], orbital_energy
             )
 
             logger.info("e_mp2 = %4.10f", e_mp2)
+            print(f"e_mp2 = {e_mp2}")
+
+        result = ElectronicStructureProblem(new_hamiltonian)
+        result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
+        result.num_spatial_orbitals = nmo_a
 
         return result
 
