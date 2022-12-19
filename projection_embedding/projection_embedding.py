@@ -102,7 +102,7 @@ class ProjectionTransformer(BaseTransformer):
         # TODO: can we deal with unrestricted spin cases?
         mo_coeff = self.basis_transformer.coefficients.alpha["+-"]
         mo_coeff_occ = mo_coeff[:, :nocc]
-        mo_coeff_unocc = mo_coeff[:, nocc:]
+        mo_coeff_vir = mo_coeff[:, nocc:]
 
         fragment_1 = np.zeros((nao, nocc_a))
         fragment_2 = np.zeros((nao, nocc_b))
@@ -113,7 +113,9 @@ class ProjectionTransformer(BaseTransformer):
         # TODO: this cannot be optional, right? Otherwise the fragments remain all-zero...
         # Maybe the idea was to allow exchanging SPADE with another localization scheme?
         if self.do_spade:
-            fragment_1, fragment_2 = self._spade_partition(overlap, mo_coeff_occ, nocc_a)
+            fragment_1, fragment_2 = _spade_partition(
+                overlap, mo_coeff_occ, self.num_basis_functions, nocc_a
+            )
 
         density_frozen = ElectronicDensity.from_raw_integrals(
             fragment_2.dot(fragment_2.transpose())
@@ -181,7 +183,7 @@ class ProjectionTransformer(BaseTransformer):
         fock -= mu * projector
 
         density_full = density_a + density_frozen
-        mo_coeff_projected = np.dot(density_full.alpha["+-"], np.dot(overlap, mo_coeff_unocc))
+        mo_coeff_projected = np.dot(density_full.alpha["+-"], np.dot(overlap, mo_coeff_vir))
 
         if np.linalg.norm(mo_coeff_projected) < 1e-05:
             logger.info("occupied and unoccupied are orthogonal")
@@ -192,35 +194,36 @@ class ProjectionTransformer(BaseTransformer):
 
         # orthogonalization procedure
         if nonorthogonal:
-            mo_coeff_unocc_projected = mo_coeff_unocc - mo_coeff_projected
+            mo_coeff_vir_projected = mo_coeff_vir - mo_coeff_projected
 
             eigval, eigvec = np.linalg.eigh(
-                np.dot(
-                    mo_coeff_unocc_projected.T, np.dot(overlap, mo_coeff_unocc_projected)
-                )
+                np.dot(mo_coeff_vir_projected.T, np.dot(overlap, mo_coeff_vir_projected))
             )
 
             eigval = np.linalg.inv(np.diag(np.sqrt(eigval)))
 
-            mo_coeff_unocc = np.dot(mo_coeff_unocc_projected, np.dot(eigvec, eigval))
+            mo_coeff_vir = np.dot(mo_coeff_vir_projected, np.dot(eigvec, eigval))
 
-            _, eigvec_fock = np.linalg.eigh(
-                np.dot(mo_coeff_unocc.T, np.dot(fock, mo_coeff_unocc))
-            )
-            mo_coeff_unocc = np.dot(mo_coeff_unocc, eigvec_fock)
+            _, eigvec_fock = np.linalg.eigh(np.dot(mo_coeff_vir.T, np.dot(fock, mo_coeff_vir)))
+            mo_coeff_vir = np.dot(mo_coeff_vir, eigvec_fock)
 
         # doing concentric local virtuals
         zeta = 1
         nvir = nmo - nocc
         nvir_act = nvir
         nvir_frozen = 0
-        mo_coeff_unocc_prime, nvir_act, nvir_frozen = self._get_truncated_virtuals(
-            overlap, overlap, mo_coeff_unocc, fock, zeta
+        mo_coeff_vir_pb, nvir_act, nvir_frozen = _concentric_localization(
+            overlap[: self.num_basis_functions, :],
+            overlap[: self.num_basis_functions, : self.num_basis_functions],
+            mo_coeff_vir,
+            self.num_basis_functions,
+            fock,
+            zeta,
         )
         logger.debug("nvir_act = %s", nvir_act)
         logger.debug("nvir_frozen = %s", nvir_frozen)
 
-        mo_coeff_excld_v = mo_coeff_unocc_prime[:, nvir_act:]
+        mo_coeff_excld_v = mo_coeff_vir_pb[:, nvir_act:]
         proj_excluded_virts = np.dot(
             overlap, np.dot(mo_coeff_excld_v, np.dot(mo_coeff_excld_v.transpose(), overlap))
         )
@@ -231,9 +234,7 @@ class ProjectionTransformer(BaseTransformer):
             (fragment_1.shape[0], fragment_1.shape[1] + nvir_act)
         )
         mo_coeff_full_system_truncated[:, :mo_coeff_embedded_ncols] = fragment_1
-        mo_coeff_full_system_truncated[:, mo_coeff_embedded_ncols:] = mo_coeff_unocc_prime[
-            :, :nvir_act
-        ]
+        mo_coeff_full_system_truncated[:, mo_coeff_embedded_ncols:] = mo_coeff_vir_pb[:, :nvir_act]
 
         nmo_a_tmp = mo_coeff_full_system_truncated.shape[1] - self.num_frozen_virtual_orbitals
         mo_coeff_full_system_truncated = mo_coeff_full_system_truncated[:, nfc:nmo_a_tmp]
@@ -335,113 +336,102 @@ class ProjectionTransformer(BaseTransformer):
 
         return fock_final, e_low_level.alpha[""]
 
-    def _get_truncated_virtuals(self, working_basis, projection_basis, mo_coeff_unocc, fock, zeta):
 
-        logger.info("")
-        logger.info("doing truncated local virtuals ")
-        logger.info("    Concentric localization and truncation for virtuals    ")
-        logger.info("     D. Claudino and N. Mayhall, JCTC, 15, 6085 (2019)     ")
-        logger.info("")
+def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock, zeta):
+    logger.info("")
+    logger.info("Doing concentric location and truncation of virtual space")
+    logger.info("    Concentric localization and truncation for virtuals    ")
+    logger.info("     D. Claudino and N. Mayhall, JCTC, 15, 6085 (2019)     ")
+    logger.info("")
 
-        projection_basis_embed = projection_basis[
-            : self.num_basis_functions, : self.num_basis_functions
-        ]
+    # S^{-1} in paper
+    overlap_a_pb_inv = np.linalg.inv(projection_basis)
 
-        working_basis_red = working_basis[: self.num_basis_functions, :]
+    # C'_{vir} in paper
+    mo_coeff_vir_pb = np.dot(overlap_a_pb_inv, np.dot(overlap_pb_wb, mo_coeff_vir))
 
-        projection_basis_embed_inv = np.linalg.inv(projection_basis_embed)
-        mo_coeff_unocc_prime = np.dot(
-            projection_basis_embed_inv, np.dot(working_basis_red, mo_coeff_unocc)
-        )
+    # Eq. (10a)
+    _, _, v_t = np.linalg.svd(
+        np.dot(mo_coeff_vir_pb.transpose(), np.dot(overlap_pb_wb, mo_coeff_vir)),
+        full_matrices=True,
+    )
+    # Eq. (10b)
+    v = v_t.transpose()
+    v_span = v[:, :num_bf]
+    v_kern = v[:, num_bf:]
 
+    # Eq. (10c)
+    mo_coeff_vir_new = np.dot(mo_coeff_vir, v_span)
+
+    # Eq. (10d)
+    mo_coeff_vir_kern = np.dot(mo_coeff_vir, v_kern)
+
+    for _ in range(zeta - 1):
+        # Eq. (12a)
         _, _, v_t = np.linalg.svd(
-            np.dot(mo_coeff_unocc_prime.transpose(), np.dot(working_basis_red, mo_coeff_unocc)),
+            np.dot(mo_coeff_vir_new.transpose(), np.dot(fock, mo_coeff_vir_kern)),
             full_matrices=True,
         )
+
+        # Eq. (12b)
         v = v_t.transpose()
+        v_span = v[:, : mo_coeff_vir_cur.shape[1]]
+        v_kern = v[:, mo_coeff_vir_cur.shape[1] :]
 
-        mo_coeff_unocc_new = np.dot(mo_coeff_unocc, v[:, : self.num_basis_functions])
-        mo_coeff_unocc_rem = np.dot(mo_coeff_unocc, v[:, self.num_basis_functions :])
+        # Eq. (12c-12d)
+        if mo_coeff_vir_kern.shape[1] > mo_coeff_vir_cur.shape[1]:
+            mo_coeff_vir_cur = np.dot(mo_coeff_vir_kern, v_span)
+            mo_coeff_vir_kern = np.dot(mo_coeff_vir_kern, v_kern)
 
-        for _ in range(zeta - 1):
-            fock_new_term = np.dot(mo_coeff_unocc_new.transpose(), np.dot(fock, mo_coeff_unocc_rem))
-            _, _, v_t = np.linalg.svd(fock_new_term, full_matrices=True)
-            v = v_t.transpose()
-
-            # update
-            mo_coeff_unocc_rem_ncols = mo_coeff_unocc_rem.shape[1]
-            mo_coeff_unocc_cur_ncols = mo_coeff_unocc_cur.shape[1]
-            if mo_coeff_unocc_rem_ncols > mo_coeff_unocc_cur_ncols:
-                mo_coeff_unocc_cur = np.dot(mo_coeff_unocc_rem, v[:, :mo_coeff_unocc_cur_ncols])
-                mo_coeff_unocc_rem = np.dot(mo_coeff_unocc_rem, v[:, mo_coeff_unocc_cur_ncols:])
-
-            else:
-                mo_coeff_unocc_cur = np.dot(mo_coeff_unocc_rem, v)
-                mo_coeff_unocc_rem = np.zeros(
-                    (mo_coeff_unocc_rem.shape[0], mo_coeff_unocc_rem.shape[1])
-                )
-
-            mo_coeff_unocc_new_nrows = mo_coeff_unocc_new.shape[0]
-            mo_coeff_unocc_new_ncols = mo_coeff_unocc_new.shape[1]
-            mo_coeff_unocc_cur_ncols = mo_coeff_unocc_cur.shape[1]
-            mo_coeff_unocc_new_tmp = np.zeros(
-                (mo_coeff_unocc_new_nrows, mo_coeff_unocc_new_ncols + mo_coeff_unocc_cur_ncols)
-            )
-            mo_coeff_unocc_new_tmp[:, :mo_coeff_unocc_new_ncols] = mo_coeff_unocc_new
-            mo_coeff_unocc_new_tmp[:, mo_coeff_unocc_new_ncols:] = mo_coeff_unocc_cur
-
-            mo_coeff_unocc_new = mo_coeff_unocc_new_tmp
-
-        logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
-
-        fock_new_virtvirt = np.dot(mo_coeff_unocc_new.transpose(), np.dot(fock, mo_coeff_unocc_new))
-
-        _, u_new = np.linalg.eigh(fock_new_virtvirt)
-
-        mo_coeff_unocc_new = np.dot(mo_coeff_unocc_new, u_new)
-
-        mo_coeff_unocc_rem_ncols = mo_coeff_unocc_rem.shape[1]
-        if mo_coeff_unocc_rem_ncols != 0:
-            fock_rem_virtvirt = np.dot(
-                mo_coeff_unocc_rem.transpose(), np.dot(fock, mo_coeff_unocc_rem)
-            )
-            _, u_rem = np.linalg.eigh(fock_rem_virtvirt)
-
-            mo_coeff_unocc_rem = np.dot(mo_coeff_unocc_rem, u_rem)
-            mo_coeff_unocc_new_nrows = mo_coeff_unocc_new.shape[0]
-            mo_coeff_unocc_new_ncols = mo_coeff_unocc_new.shape[1]
-            mo_coeff_unocc_rem_ncols = mo_coeff_unocc_rem.shape[1]
-            mo_coeff_unocc_tmp = np.zeros(
-                (mo_coeff_unocc_new_nrows, mo_coeff_unocc_new_ncols + mo_coeff_unocc_rem_ncols)
-            )
-            mo_coeff_unocc_tmp[:, :mo_coeff_unocc_new_ncols] = mo_coeff_unocc_new
-            mo_coeff_unocc_tmp[:, mo_coeff_unocc_new_ncols:] = mo_coeff_unocc_rem
-            mo_coeff_unocc = mo_coeff_unocc_tmp
         else:
-            mo_coeff_unocc = mo_coeff_unocc_new
+            mo_coeff_vir_cur = np.dot(mo_coeff_vir_kern, v)
+            mo_coeff_vir_kern = np.zeros_like(mo_coeff_vir_kern)
 
-        nvir_act = mo_coeff_unocc_new.shape[1]
-        nvir_frozen = mo_coeff_unocc.shape[1] - nvir_act
+        # Eq. (12e)
+        mo_coeff_vir_new = np.hstack((mo_coeff_vir_new, mo_coeff_vir_cur))
 
-        return mo_coeff_unocc, nvir_act, nvir_frozen
+    logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
 
-    def _spade_partition(self, overlap: np.ndarray, mo_coeff_occ: np.ndarray, nocc_a: int):
-        logger.info("")
-        logger.info("Doing SPADE partitioning")
-        logger.info("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
-        logger.info("")
+    _, eigvecs = np.linalg.eigh(
+        np.dot(mo_coeff_vir_new.transpose(), np.dot(fock, mo_coeff_vir_new))
+    )
 
-        # 1. use symmetric orthogonalization on the overlap matrix
-        symm_orth = symmetric_orthogonalization(overlap)
+    mo_coeff_vir_new = np.dot(mo_coeff_vir_new, eigvecs)
 
-        # 2. change the MO basis to be orthogonal and reasonably localized
-        mo_coeff_tmp = np.dot(symm_orth, mo_coeff_occ)
+    if mo_coeff_vir_kern.shape[1] != 0:
+        _, eigvecs = np.linalg.eigh(
+            np.dot(mo_coeff_vir_kern.transpose(), np.dot(fock, mo_coeff_vir_kern))
+        )
 
-        # 3. select the active sector
-        mo_coeff_tmp = mo_coeff_tmp[: self.num_basis_functions, :]
+        mo_coeff_vir_kern = np.dot(mo_coeff_vir_kern, eigvecs)
 
-        # 4. use SVD to find the final rotation matrix
-        _, _, rot_T = np.linalg.svd(mo_coeff_tmp, full_matrices=True)
-        rot = rot_T.transpose()
+        mo_coeff_vir = np.hstack((mo_coeff_vir_new, mo_coeff_vir_kern))
+    else:
+        mo_coeff_vir = mo_coeff_vir_new
 
-        return np.dot(mo_coeff_occ, rot[:, :nocc_a]), np.dot(mo_coeff_occ, rot[:, nocc_a:])
+    nvir_act = mo_coeff_vir_new.shape[1]
+    nvir_frozen = mo_coeff_vir.shape[1] - nvir_act
+
+    return mo_coeff_vir, nvir_act, nvir_frozen
+
+
+def _spade_partition(overlap: np.ndarray, mo_coeff_occ: np.ndarray, num_bf: int, nocc_a: int):
+    logger.info("")
+    logger.info("Doing SPADE partitioning")
+    logger.info("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
+    logger.info("")
+
+    # 1. use symmetric orthogonalization on the overlap matrix
+    symm_orth = symmetric_orthogonalization(overlap)
+
+    # 2. change the MO basis to be orthogonal and reasonably localized
+    mo_coeff_tmp = np.dot(symm_orth, mo_coeff_occ)
+
+    # 3. select the active sector
+    mo_coeff_tmp = mo_coeff_tmp[:num_bf, :]
+
+    # 4. use SVD to find the final rotation matrix
+    _, _, rot_t = np.linalg.svd(mo_coeff_tmp, full_matrices=True)
+    rot = rot_t.transpose()
+
+    return np.dot(mo_coeff_occ, rot[:, :nocc_a]), np.dot(mo_coeff_occ, rot[:, nocc_a:])
