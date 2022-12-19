@@ -127,7 +127,7 @@ class ProjectionTransformer(BaseTransformer):
         g_ao = to_chemist_ordering(hamiltonian.electronic_integrals.alpha["++--"])
 
         e_low_level = 0.0
-        fock, e_low_level = self._fock_build_A(
+        fock, e_low_level = self._fock_build_a(
             True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
         )
 
@@ -153,7 +153,7 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_full_system[:, nocc_a:nocc] = mo_coeff_occ_frozen
             mo_coeff_full_system[:, nocc:] = mo_coeff_unocc
 
-            fock, e_low_level = self._fock_build_A(
+            fock, e_low_level = self._fock_build_a(
                 True, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
             )
 
@@ -163,7 +163,7 @@ class ProjectionTransformer(BaseTransformer):
 
             e_new_a += e_low_level + e_nuc
 
-            logger.info(f"SCF Iteration {scf_iter}: Energy = {e_new_a} dE = {e_new_a - e_old}")
+            logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
 
             # SCF Converged?
             if abs(e_new_a - e_old) < e_thres:
@@ -175,12 +175,12 @@ class ProjectionTransformer(BaseTransformer):
 
         # Post iterations
         logger.info("\nSCF converged.")
-        logger.info(f"Final SCF A-in-B Energy: {e_new_a} [Eh]")
+        logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         # post convergence wrapup
         projector = np.dot(overlap, np.dot(density_frozen, overlap))
 
-        fock, e_low_level = self._fock_build_A(
+        fock, e_low_level = self._fock_build_a(
             False, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
         )
 
@@ -198,25 +198,25 @@ class ProjectionTransformer(BaseTransformer):
             nonorthogonal = True
 
         # orthogonalization procedure
-        if nonorthogonal == True:
+        if nonorthogonal:
             mo_coeff_unocc_projected = mo_coeff_unocc - mo_coeff_projected
 
-            eval, evec = np.linalg.eigh(
+            eigval, eigvec = np.linalg.eigh(
                 np.dot(
                     mo_coeff_unocc_projected.transpose(), np.dot(overlap, mo_coeff_unocc_projected)
                 )
             )
 
-            for i in range(evec.shape[0]):
-                eval[i] = eval[i] ** (-0.5)
-            eval = np.diag(eval)
+            for i in range(eigvec.shape[0]):
+                eigval[i] = eigval[i] ** (-0.5)
+            eigval = np.diag(eigval)
 
-            mo_coeff_unocc = np.dot(mo_coeff_unocc_projected, np.dot(evec, eval))
+            mo_coeff_unocc = np.dot(mo_coeff_unocc_projected, np.dot(eigvec, eigval))
 
-            _, evec_fock = np.linalg.eigh(
+            _, eigvec_fock = np.linalg.eigh(
                 np.dot(mo_coeff_unocc.transpose(), np.dot(fock, mo_coeff_unocc))
             )
-            mo_coeff_unocc = np.dot(mo_coeff_unocc, evec_fock)
+            mo_coeff_unocc = np.dot(mo_coeff_unocc, eigvec_fock)
 
         # doing concentric local virtuals
         zeta = 1
@@ -341,7 +341,7 @@ class ProjectionTransformer(BaseTransformer):
 
         return result
 
-    def _fock_build_A(
+    def _fock_build_a(
         self, project, mo_coeff_full_system, density_frozen, nao, nocc_a, overlap, hamiltonian
     ):
         mo_coeff_a = np.zeros((nao, nao))
@@ -353,20 +353,22 @@ class ProjectionTransformer(BaseTransformer):
         fock_a = hamiltonian.fock(density_a)
         fock_tot = hamiltonian.fock(density_tot)
 
+        h_core = hamiltonian.electronic_integrals.one_body
+
         e_low_level = ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            fock_tot + hamiltonian.electronic_integrals.one_body,
+            fock_tot + h_core,
             density_tot,
         )
         e_low_level -= ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            fock_a + hamiltonian.electronic_integrals.one_body,
+            fock_a + h_core,
             density_a,
         )
 
-        # TODO: check if the simplification done here (yielding in simply fock_tot_low_level being
-        # used) can also be done in the DFT scenario
-        fock_mat = fock_tot.alpha["+-"]
+        # NOTE: the following is written as it is because this reflects better how DFT will differ
+        fock_final = fock_a + (fock_tot - h_core) - (fock_a - h_core)
+        fock_mat = fock_final.alpha["+-"]
 
         if project == True:
             projector = np.identity(nao) - overlap.dot(density_frozen)
