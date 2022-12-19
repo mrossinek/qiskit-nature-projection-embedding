@@ -118,11 +118,16 @@ class ProjectionTransformer(BaseTransformer):
 
         density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
 
-        e_low_level = 0.0
         fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
 
-        projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
-        fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
+        def _projector(nao, overlap, density):
+            return np.identity(nao) - overlap.dot(density)
+
+        def _project(projector, fock):
+            return np.einsum("ij,jk,lk->il", projector, fock, projector)
+
+        projector = _projector(nao, overlap, density_frozen.alpha["+-"])
+        fock = _project(projector, fock_.alpha["+-"])
 
         e_old = 0
         e_thres = 1e-7
@@ -142,8 +147,8 @@ class ProjectionTransformer(BaseTransformer):
 
             fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
 
-            projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
-            fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
+            projector = _projector(nao, overlap, density_frozen.alpha["+-"])
+            fock = _project(projector, fock_.alpha["+-"])
 
             e_new_a = ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
@@ -168,14 +173,12 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         # post convergence wrapup
-        projector = np.dot(overlap, np.dot(density_frozen.alpha["+-"], overlap))
-
         fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
 
         fock = fock_.alpha["+-"]
 
         mu = 1.0e8
-        fock -= mu * projector
+        fock -= mu * np.einsum("ij,jk,kl->il", overlap, density_frozen.alpha["+-"], overlap)
 
         density_full = density_a + density_frozen
         mo_coeff_projected = np.dot(density_full.alpha["+-"], np.dot(overlap, mo_coeff_vir))
@@ -215,6 +218,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.debug("nvir_frozen = %s", nvir_frozen)
 
         mo_coeff_vir_act, mo_coeff_vir_frozen = np.hsplit(mo_coeff_vir_pb, [nvir_act])
+
         proj_excluded_virts = np.dot(
             overlap, np.dot(mo_coeff_vir_frozen, np.dot(mo_coeff_vir_frozen.transpose(), overlap))
         )
