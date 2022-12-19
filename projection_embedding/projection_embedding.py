@@ -115,7 +115,9 @@ class ProjectionTransformer(BaseTransformer):
             fragment_1, fragment_2 = self._spade_partition(overlap, mo_coeff_occ, nocc_a)
 
         mo_coeff_occ_frozen = fragment_2
-        density_frozen = mo_coeff_occ_frozen.dot(mo_coeff_occ_frozen.transpose())
+        density_frozen = ElectronicDensity.from_raw_integrals(
+            mo_coeff_occ_frozen.dot(mo_coeff_occ_frozen.transpose())
+        )
         mo_coeff_occ_embedded = fragment_1
 
         h_core = hamiltonian.electronic_integrals.alpha["+-"]
@@ -177,7 +179,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         # post convergence wrapup
-        projector = np.dot(overlap, np.dot(density_frozen, overlap))
+        projector = np.dot(overlap, np.dot(density_frozen.alpha["+-"], overlap))
 
         fock, e_low_level = self._fock_build_a(
             False, density_a, density_frozen, nao, overlap, hamiltonian
@@ -186,8 +188,8 @@ class ProjectionTransformer(BaseTransformer):
         mu = 1.0e8
         fock -= mu * projector
 
-        density_full = density_a.alpha["+-"] + density_frozen
-        mo_coeff_projected = np.dot(density_full, np.dot(overlap, mo_coeff_unocc))
+        density_full = density_a + density_frozen
+        mo_coeff_projected = np.dot(density_full.alpha["+-"], np.dot(overlap, mo_coeff_unocc))
 
         if np.linalg.norm(mo_coeff_projected) < 1e-05:
             logger.info("occupied and unoccupied are orthogonal")
@@ -341,7 +343,7 @@ class ProjectionTransformer(BaseTransformer):
         return result
 
     def _fock_build_a(self, project, density_a, density_frozen, nao, overlap, hamiltonian):
-        density_tot = density_a + ElectronicDensity.from_raw_integrals(density_frozen)
+        density_tot = density_a + density_frozen
 
         fock_a = hamiltonian.fock(density_a)
         fock_tot = hamiltonian.fock(density_tot)
@@ -364,7 +366,7 @@ class ProjectionTransformer(BaseTransformer):
         fock_mat = fock_final.alpha["+-"]
 
         if project == True:
-            projector = np.identity(nao) - overlap.dot(density_frozen)
+            projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
             fock_mat = np.dot(projector, np.dot(fock_mat, projector.transpose()))
 
         return fock_mat, e_low_level.alpha[""]
