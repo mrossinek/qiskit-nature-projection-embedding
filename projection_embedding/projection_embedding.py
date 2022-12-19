@@ -14,15 +14,16 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import logging
 
 import numpy as np
 import scipy.linalg as la
 
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy, Hamiltonian
-from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
-from qiskit_nature.second_q.operators.tensor_ordering import to_chemist_ordering
-from qiskit_nature.second_q.problems import BaseProblem, ElectronicStructureProblem
+from qiskit_nature.second_q.operators import ElectronicIntegrals
+from qiskit_nature.second_q.problems import BaseProblem, ElectronicBasis, ElectronicStructureProblem
 from qiskit_nature.second_q.properties import ElectronicDensity
 from qiskit_nature.utils import symmetric_orthogonalization
 
@@ -117,9 +118,6 @@ class ProjectionTransformer(BaseTransformer):
         density_frozen = ElectronicDensity.from_raw_integrals(
             fragment_2.dot(fragment_2.transpose())
         )
-
-        h_core = hamiltonian.electronic_integrals.alpha["+-"]
-        g_ao = to_chemist_ordering(hamiltonian.electronic_integrals.alpha["++--"])
 
         density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
 
@@ -255,84 +253,72 @@ class ProjectionTransformer(BaseTransformer):
 
         ###Storing integrals to FCIDUMP
 
-        g_mo_sf = PolynomialTensor.einsum(
-            {"prsq,pi,qj,rk,sl->iklj": ("++--", *("+-",) * 4, "++--")},
-            PolynomialTensor({"++--": g_ao}),
-            *(PolynomialTensor({"+-": mo_coeff_full_system_truncated}, validate=False),) * 4,
-        )["++--"]
-
-        # AO2MO of one-body
-        h_mo_sf = np.einsum(
-            "pi,pq,qj -> ij",
-            mo_coeff_full_system_truncated,
-            h_core,
-            mo_coeff_full_system_truncated,
-            optimize=True,
+        transform = BasisTransformer(
+            ElectronicBasis.AO,
+            ElectronicBasis.MO,
+            ElectronicIntegrals.from_raw_integrals(mo_coeff_full_system_truncated, validate=False),
         )
 
-        # f = h + 2J-K
-        f = np.diag(orbital_energy)
-        h_eff = np.zeros((f.shape[0], f.shape[1]))
-        h_eff += f
-        h_eff -= np.einsum("pqii -> pq", 2.0 * g_mo_sf[:, :, :nocc_a, :nocc_a], optimize=True)
-        h_eff += np.einsum("piqi -> pq", g_mo_sf[:, :nocc_a, :, :nocc_a], optimize=True)
+        new_hamil = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
 
-        e_new_a_only = np.einsum("ii->", 2 * h_mo_sf[:nocc_a, :nocc_a], optimize=True)
-        e_new_a_only += np.einsum(
-            "iijj->", 2 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
+        only_a_mat = np.diag(
+            [1.0 if i < nocc_a else 0.0 for i in range(mo_coeff_full_system_truncated.shape[1])]
         )
-        e_new_a_only -= np.einsum(
-            "ijij->", 1 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
-        )
-        logger.info("Final RHF A Energy        : %.14f [Eh]" % (e_new_a_only))
-        e_new_a_only += e_nuc
-        logger.info("Final RHF A Energy tot    : %.14f [Eh]" % (e_new_a_only))
+        only_a = ElectronicDensity.from_raw_integrals(only_a_mat)
 
-        e_new_a_only = np.einsum("ii->", 2 * h_eff[:nocc_a, :nocc_a], optimize=True)
-        e_new_a_only += np.einsum(
-            "iijj->", 2 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
+        e_new_a_only = float(
+            ElectronicIntegrals.einsum(
+                {"ij,ji": ("+-", "+-", "")},
+                new_hamil.electronic_integrals.one_body + new_hamil.fock(only_a),
+                only_a,
+            ).alpha[""]
         )
-        e_new_a_only -= np.einsum(
-            "ijij->", 1 * g_mo_sf[:nocc_a, :nocc_a, :nocc_a, :nocc_a], optimize=True
-        )
-        logger.info("Final RHF A eff Energy        : %.14f [Eh]" % (e_new_a_only))
-        shift = -1.0 * float(e_new_a_only)
-        e_new_a_only += e_nuc
-        logger.info("Final RHF A eff Energy tot    : %.14f [Eh]" % (e_new_a_only))
 
-        new_hamiltonian = ElectronicEnergy.from_raw_integrals(h_eff, g_mo_sf)
+        logger.info("Final RHF A Energy        : %.14f [Eh]", e_new_a_only)
+        logger.info("Final RHF A Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
+
+        new_hamil.electronic_integrals -= new_hamil.fock(only_a)
+        new_hamil.electronic_integrals += ElectronicIntegrals.from_raw_integrals(
+            np.diag(orbital_energy)
+        )
+
+        e_new_a_only = ElectronicIntegrals.einsum(
+            {"ij,ji": ("+-", "+-", "")},
+            new_hamil.electronic_integrals.one_body + new_hamil.fock(only_a),
+            only_a,
+        ).alpha[""]
+
+        logger.info("Final RHF A eff Energy        : %.14f [Eh]", e_new_a_only)
+        logger.info("Final RHF A eff Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
+
+        new_hamiltonian = new_hamil
         new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
-        new_hamiltonian.constants["ProjectionTransformer"] = shift
+        new_hamiltonian.constants["ProjectionTransformer"] = -1.0 * float(e_new_a_only)
 
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
         result.num_spatial_orbitals = nmo_a
 
-        g_mo_sf = g_mo_sf.transpose(0, 2, 1, 3)
+        if logger.isEnabledFor(logging.INFO):
 
-        e_ij = orbital_energy[:nocc_a]
-        e_ab = orbital_energy[nocc_a:]
+            from qiskit_nature.second_q.algorithms.initial_points.mp2_initial_point import (
+                _compute_mp2,
+            )
+            from qiskit_nature.second_q.operators.tensor_ordering import (
+                IndexType,
+                to_chemist_ordering,
+            )
 
-        # -1 means that it is an unknown dimension and we want numpy to figure it out.
-        e_denom = 1 / (
-            e_ij.reshape(-1, 1, 1, 1) - e_ab.reshape(-1, 1, 1) + e_ij.reshape(-1, 1) - e_ab
-        )
+            _, e_mp2 = _compute_mp2(
+                nocc_a,
+                to_chemist_ordering(
+                    new_hamil.electronic_integrals.two_body.alpha["++--"],
+                    index_order=IndexType.PHYSICIST,
+                ),
+                orbital_energy,
+            )
 
-        g_vvoo_ee = g_mo_sf[nocc_a:, nocc_a:, :nocc_a, :nocc_a]
-        g_oovv_ee = g_mo_sf[:nocc_a, :nocc_a, nocc_a:, nocc_a:]
-        t2_ee = np.einsum("iajb,abij->abij", e_denom, g_vvoo_ee, optimize=True)
-
-        e_mp2 = np.einsum("ikac,acik->", g_oovv_ee, t2_ee, optimize=True)
-        # +g_ee(ijab) * t2_ee(abij) * 0.5
-        e_mp2 += np.einsum("ijab,abij->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
-        # -g_ee(ijab) * t2_ee(abji) * 0.5
-        e_mp2 -= np.einsum("ijab,abji->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
-        # +g_ee(klcd) * t2_ee(cdkl) * 0.5
-        e_mp2 += np.einsum("klcd,cdkl->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
-        # -g_ee(klcd) * t2_ee(cdlk) * 0.5
-        e_mp2 -= np.einsum("klcd,cdlk->", 0.5 * g_oovv_ee, t2_ee, optimize=True)
-
-        logger.info("e_mp2 = %4.10f" % (e_mp2))
+            logger.info("e_mp2 = %4.10f", e_mp2)
 
         return result
 
