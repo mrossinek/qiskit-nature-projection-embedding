@@ -124,7 +124,7 @@ class ProjectionTransformer(BaseTransformer):
         density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
 
         e_low_level = 0.0
-        fock_, e_low_level = self._fock_build_a(density_a, density_frozen, hamiltonian)
+        fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
 
         projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
         fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
@@ -145,7 +145,7 @@ class ProjectionTransformer(BaseTransformer):
 
             density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
 
-            fock_, e_low_level = self._fock_build_a(density_a, density_frozen, hamiltonian)
+            fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
 
             projector = np.identity(nao) - overlap.dot(density_frozen.alpha["+-"])
             fock = np.dot(projector, np.dot(fock_.alpha["+-"], projector.transpose()))
@@ -175,7 +175,7 @@ class ProjectionTransformer(BaseTransformer):
         # post convergence wrapup
         projector = np.dot(overlap, np.dot(density_frozen.alpha["+-"], overlap))
 
-        fock_, e_low_level = self._fock_build_a(density_a, density_frozen, hamiltonian)
+        fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
 
         fock = fock_.alpha["+-"]
 
@@ -208,17 +208,13 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_vir = np.dot(mo_coeff_vir, eigvec_fock)
 
         # doing concentric local virtuals
-        zeta = 1
-        nvir = nmo - nocc
-        nvir_act = nvir
-        nvir_frozen = 0
         mo_coeff_vir_pb, nvir_act, nvir_frozen = _concentric_localization(
             overlap[: self.num_basis_functions, :],
             overlap[: self.num_basis_functions, : self.num_basis_functions],
             mo_coeff_vir,
             self.num_basis_functions,
             fock,
-            zeta,
+            zeta=1,
         )
         logger.debug("nvir_act = %s", nvir_act)
         logger.debug("nvir_frozen = %s", nvir_frozen)
@@ -312,29 +308,30 @@ class ProjectionTransformer(BaseTransformer):
 
         return result
 
-    def _fock_build_a(self, density_a, density_frozen, hamiltonian):
-        density_tot = density_a + density_frozen
 
-        fock_a = hamiltonian.fock(density_a)
-        fock_tot = hamiltonian.fock(density_tot)
+def _fock_build_a(density_a, density_frozen, hamiltonian):
+    density_tot = density_a + density_frozen
 
-        h_core = hamiltonian.electronic_integrals.one_body
+    fock_a = hamiltonian.fock(density_a)
+    fock_tot = hamiltonian.fock(density_tot)
 
-        e_low_level = ElectronicIntegrals.einsum(
-            {"ij,ji": ("+-", "+-", "")},
-            fock_tot + h_core,
-            density_tot,
-        )
-        e_low_level -= ElectronicIntegrals.einsum(
-            {"ij,ji": ("+-", "+-", "")},
-            fock_a + h_core,
-            density_a,
-        )
+    h_core = hamiltonian.electronic_integrals.one_body
 
-        # NOTE: the following is written as it is because this reflects better how DFT will differ
-        fock_final = fock_a + (fock_tot - h_core) - (fock_a - h_core)
+    e_low_level = ElectronicIntegrals.einsum(
+        {"ij,ji": ("+-", "+-", "")},
+        fock_tot + h_core,
+        density_tot,
+    )
+    e_low_level -= ElectronicIntegrals.einsum(
+        {"ij,ji": ("+-", "+-", "")},
+        fock_a + h_core,
+        density_a,
+    )
 
-        return fock_final, e_low_level.alpha[""]
+    # NOTE: the following is written as it is because this reflects better how DFT will differ
+    fock_final = fock_a + (fock_tot - h_core) - (fock_a - h_core)
+
+    return fock_final, e_low_level.alpha[""]
 
 
 def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock, zeta):
