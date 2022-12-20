@@ -99,35 +99,33 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff = self.basis_transformer.coefficients.alpha["+-"]
         mo_coeff_occ, mo_coeff_vir = np.hsplit(mo_coeff, [nocc])
 
-        fragment_1 = np.zeros((nao, nocc_a))
-        fragment_2 = np.zeros((nao, nocc_b))
+        fragment_a = np.zeros((nao, nocc_a))
+        fragment_b = np.zeros((nao, nocc_b))
 
         overlap = problem.overlap_matrix
         overlap[np.abs(overlap) < 1e-12] = 0.0
+        overlap_ints = ElectronicIntegrals.from_raw_integrals(overlap)
 
         # TODO: this cannot be optional, right? Otherwise the fragments remain all-zero...
         # Maybe the idea was to allow exchanging SPADE with another localization scheme?
         if self.do_spade:
-            fragment_1, fragment_2 = _spade_partition(
+            fragment_a, fragment_b = _spade_partition(
                 overlap, mo_coeff_occ, self.num_basis_functions, nocc_a
             )
 
-        density_frozen = ElectronicDensity.from_raw_integrals(
-            fragment_2.dot(fragment_2.transpose())
+        density_b = ElectronicDensity.from_raw_integrals(fragment_b.dot(fragment_b.transpose()))
+
+        density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.transpose()))
+
+        fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+
+        identity = ElectronicIntegrals.from_raw_integrals(np.identity(nao))
+        projector = identity - ElectronicIntegrals.einsum(
+            {"ij,jk->ik": ("+-",) * 3}, overlap_ints, density_b
         )
-
-        density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
-
-        fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
-
-        def _projector(nao, overlap, density):
-            return np.identity(nao) - overlap.dot(density)
-
-        def _project(projector, fock):
-            return np.einsum("ij,jk,lk->il", projector, fock, projector)
-
-        projector = _projector(nao, overlap, density_frozen.alpha["+-"])
-        fock = _project(projector, fock_.alpha["+-"])
+        fock = ElectronicIntegrals.einsum(
+            {"ij,jk,lk->il": ("+-",) * 4}, projector, fock_, projector
+        )
 
         e_old = 0
         e_thres = 1e-7
@@ -138,17 +136,22 @@ class ProjectionTransformer(BaseTransformer):
 
         e_nuc = hamiltonian.nuclear_repulsion_energy
 
+        # TODO: is this SCF loop necessary in the HF case?
         for scf_iter in range(1, max_iter + 1):
 
-            _, mo_coeff_a_full = la.eigh(fock, overlap)
-            fragment_1 = mo_coeff_a_full[:, :nocc_a]
+            _, mo_coeff_a_full = la.eigh(fock.alpha["+-"], overlap)
+            fragment_a = mo_coeff_a_full[:, :nocc_a]
 
-            density_a = ElectronicDensity.from_raw_integrals(fragment_1.dot(fragment_1.transpose()))
+            density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.transpose()))
 
-            fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
+            fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
-            projector = _projector(nao, overlap, density_frozen.alpha["+-"])
-            fock = _project(projector, fock_.alpha["+-"])
+            projector = identity - ElectronicIntegrals.einsum(
+                {"ij,jk->ik": ("+-",) * 3}, overlap_ints, density_b
+            )
+            fock = ElectronicIntegrals.einsum(
+                {"ij,jk,lk->il": ("+-",) * 4}, projector, fock_, projector
+            )
 
             e_new_a = ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
@@ -173,14 +176,14 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         # post convergence wrapup
-        fock_, e_low_level = _fock_build_a(density_a, density_frozen, hamiltonian)
+        fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
         fock = fock_.alpha["+-"]
 
         mu = 1.0e8
-        fock -= mu * np.einsum("ij,jk,kl->il", overlap, density_frozen.alpha["+-"], overlap)
+        fock -= mu * np.einsum("ij,jk,kl->il", overlap, density_b.alpha["+-"], overlap)
 
-        density_full = density_a + density_frozen
+        density_full = density_a + density_b
         mo_coeff_projected = np.dot(density_full.alpha["+-"], np.dot(overlap, mo_coeff_vir))
 
         if np.linalg.norm(mo_coeff_projected) < 1e-05:
@@ -206,7 +209,7 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_vir = np.dot(mo_coeff_vir, eigvec_fock)
 
         # doing concentric local virtuals
-        mo_coeff_vir_pb, nvir_act, nvir_frozen = _concentric_localization(
+        mo_coeff_vir_pb, nvir_a, nvir_b = _concentric_localization(
             overlap[: self.num_basis_functions, :],
             overlap[: self.num_basis_functions, : self.num_basis_functions],
             mo_coeff_vir,
@@ -214,44 +217,39 @@ class ProjectionTransformer(BaseTransformer):
             fock,
             zeta=1,  # TODO: make configurable and figure out what exactly zeta is meant to do?
         )
-        logger.debug("nvir_act = %s", nvir_act)
-        logger.debug("nvir_frozen = %s", nvir_frozen)
+        logger.debug("nvir_a = %s", nvir_a)
+        logger.debug("nvir_b = %s", nvir_b)
 
-        mo_coeff_vir_act, mo_coeff_vir_frozen = np.hsplit(mo_coeff_vir_pb, [nvir_act])
+        mo_coeff_vir_a, mo_coeff_vir_b = np.hsplit(mo_coeff_vir_pb, [nvir_a])
 
         proj_excluded_virts = np.dot(
-            overlap, np.dot(mo_coeff_vir_frozen, np.dot(mo_coeff_vir_frozen.transpose(), overlap))
+            overlap, np.dot(mo_coeff_vir_b, np.dot(mo_coeff_vir_b.transpose(), overlap))
         )
         fock += mu * proj_excluded_virts
 
         max_orb = -self.num_frozen_virtual_orbitals if self.num_frozen_virtual_orbitals else None
-        mo_coeff_full_system_truncated = np.hstack((fragment_1, mo_coeff_vir_act))[
+        mo_coeff_final = np.hstack((fragment_a, mo_coeff_vir_a))[
             :, self.num_frozen_occupied_orbitals : max_orb
         ]
-        logger.debug("nmo_a = %s", mo_coeff_full_system_truncated.shape[1])
+        logger.debug("nmo_a = %s", mo_coeff_final.shape[1])
         nocc_a -= self.num_frozen_occupied_orbitals
 
-        orbital_energy_mat = np.dot(
-            mo_coeff_full_system_truncated.transpose(), np.dot(fock, mo_coeff_full_system_truncated)
-        )
+        orbital_energy_mat = np.dot(mo_coeff_final.transpose(), np.dot(fock, mo_coeff_final))
         orbital_energy = np.diag(orbital_energy_mat)
         logger.info("orbital energies")
         logger.info(orbital_energy)
 
-        ###Storing integrals to FCIDUMP
-
         transform = BasisTransformer(
             ElectronicBasis.AO,
             ElectronicBasis.MO,
-            ElectronicIntegrals.from_raw_integrals(mo_coeff_full_system_truncated, validate=False),
+            ElectronicIntegrals.from_raw_integrals(mo_coeff_final, validate=False),
         )
 
         new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
 
-        only_a_mat = np.diag(
-            [1.0 if i < nocc_a else 0.0 for i in range(mo_coeff_full_system_truncated.shape[1])]
+        only_a = ElectronicDensity.from_raw_integrals(
+            np.diag([1.0 if i < nocc_a else 0.0 for i in range(mo_coeff_final.shape[1])])
         )
-        only_a = ElectronicDensity.from_raw_integrals(only_a_mat)
 
         e_new_a_only = float(
             ElectronicIntegrals.einsum(
@@ -296,13 +294,13 @@ class ProjectionTransformer(BaseTransformer):
 
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
-        result.num_spatial_orbitals = mo_coeff_full_system_truncated.shape[1]
+        result.num_spatial_orbitals = mo_coeff_final.shape[1]
 
         return result
 
 
-def _fock_build_a(density_a, density_frozen, hamiltonian):
-    density_tot = density_a + density_frozen
+def _fock_build_a(density_a, density_b, hamiltonian):
+    density_tot = density_a + density_b
 
     fock_a = hamiltonian.fock(density_a)
     fock_tot = hamiltonian.fock(density_tot)
@@ -396,10 +394,10 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     else:
         mo_coeff_vir = mo_coeff_vir_new
 
-    nvir_act = mo_coeff_vir_new.shape[1]
-    nvir_frozen = mo_coeff_vir.shape[1] - nvir_act
+    nvir_a = mo_coeff_vir_new.shape[1]
+    nvir_b = mo_coeff_vir.shape[1] - nvir_a
 
-    return mo_coeff_vir, nvir_act, nvir_frozen
+    return mo_coeff_vir, nvir_a, nvir_b
 
 
 def _spade_partition(overlap: np.ndarray, mo_coeff_occ: np.ndarray, num_bf: int, nocc_a: int):
