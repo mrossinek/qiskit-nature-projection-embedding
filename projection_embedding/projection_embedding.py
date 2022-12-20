@@ -113,9 +113,9 @@ class ProjectionTransformer(BaseTransformer):
                 overlap, mo_coeff_occ, self.num_basis_functions, nocc_a
             )
 
-        density_b = ElectronicDensity.from_raw_integrals(fragment_b.dot(fragment_b.transpose()))
+        density_b = ElectronicDensity.from_raw_integrals(fragment_b.dot(fragment_b.T))
 
-        density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.transpose()))
+        density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.T))
 
         fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
@@ -142,7 +142,7 @@ class ProjectionTransformer(BaseTransformer):
             _, mo_coeff_a_full = la.eigh(fock.alpha["+-"], overlap)
             fragment_a = mo_coeff_a_full[:, :nocc_a]
 
-            density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.transpose()))
+            density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.T))
 
             fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
@@ -181,10 +181,14 @@ class ProjectionTransformer(BaseTransformer):
         fock = fock_.alpha["+-"]
 
         mu = 1.0e8
-        fock -= mu * np.einsum("ij,jk,kl->il", overlap, density_b.alpha["+-"], overlap)
+        fock -= mu * np.einsum(
+            "ij,jk,kl->il", overlap, density_b.alpha["+-"], overlap, optimize=True
+        )
 
         density_full = density_a + density_b
-        mo_coeff_projected = np.dot(density_full.alpha["+-"], np.dot(overlap, mo_coeff_vir))
+        mo_coeff_projected = np.einsum(
+            "ij,jk,kl->il", density_full.alpha["+-"], overlap, mo_coeff_vir, optimize=True
+        )
 
         if np.linalg.norm(mo_coeff_projected) < 1e-05:
             logger.info("occupied and unoccupied are orthogonal")
@@ -194,18 +198,29 @@ class ProjectionTransformer(BaseTransformer):
             nonorthogonal = True
 
         # orthogonalization procedure
+        # TODO: which procedure is this exactly and when does it become necessary? In the DFT case?
         if nonorthogonal:
             mo_coeff_vir_projected = mo_coeff_vir - mo_coeff_projected
 
             eigval, eigvec = np.linalg.eigh(
-                np.dot(mo_coeff_vir_projected.T, np.dot(overlap, mo_coeff_vir_projected))
+                np.einsum(
+                    "ji,jk,kl->il",
+                    mo_coeff_vir_projected,
+                    overlap,
+                    mo_coeff_vir_projected,
+                    optimize=True,
+                )
             )
 
             eigval = np.linalg.inv(np.diag(np.sqrt(eigval)))
 
-            mo_coeff_vir = np.dot(mo_coeff_vir_projected, np.dot(eigvec, eigval))
+            mo_coeff_vir = np.einsum(
+                "ij,jk,kl->il", mo_coeff_vir_projected, eigvec, eigval, optimize=True
+            )
 
-            _, eigvec_fock = np.linalg.eigh(np.dot(mo_coeff_vir.T, np.dot(fock, mo_coeff_vir)))
+            _, eigvec_fock = np.linalg.eigh(
+                np.einsum("ji,jk,kl->il", mo_coeff_vir, fock, mo_coeff_vir, optimize=True)
+            )
             mo_coeff_vir = np.dot(mo_coeff_vir, eigvec_fock)
 
         # doing concentric local virtuals
@@ -222,8 +237,8 @@ class ProjectionTransformer(BaseTransformer):
 
         mo_coeff_vir_a, mo_coeff_vir_b = np.hsplit(mo_coeff_vir_pb, [nvir_a])
 
-        proj_excluded_virts = np.dot(
-            overlap, np.dot(mo_coeff_vir_b, np.dot(mo_coeff_vir_b.transpose(), overlap))
+        proj_excluded_virts = np.einsum(
+            "ij,jk,lk,lm->im", overlap, mo_coeff_vir_b, mo_coeff_vir_b, overlap, optimize=True
         )
         fock += mu * proj_excluded_virts
 
@@ -234,7 +249,9 @@ class ProjectionTransformer(BaseTransformer):
         logger.debug("nmo_a = %s", mo_coeff_final.shape[1])
         nocc_a -= self.num_frozen_occupied_orbitals
 
-        orbital_energy_mat = np.dot(mo_coeff_final.transpose(), np.dot(fock, mo_coeff_final))
+        orbital_energy_mat = np.einsum(
+            "ji,jk,kl->il", mo_coeff_final, fock, mo_coeff_final, optimize=True
+        )
         orbital_energy = np.diag(orbital_energy_mat)
         logger.info("orbital energies")
         logger.info(orbital_energy)
@@ -290,7 +307,6 @@ class ProjectionTransformer(BaseTransformer):
             )
 
             logger.info("e_mp2 = %4.10f", e_mp2)
-            print(f"e_mp2 = {e_mp2}")
 
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = self.num_electrons - (self.num_frozen_occupied_orbitals * 2)
@@ -339,16 +355,17 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     overlap_a_pb_inv = np.linalg.inv(projection_basis)
 
     # C'_{vir} in paper
-    mo_coeff_vir_pb = np.dot(overlap_a_pb_inv, np.dot(overlap_pb_wb, mo_coeff_vir))
+    mo_coeff_vir_pb = np.einsum(
+        "ij,jk,kl->il", overlap_a_pb_inv, overlap_pb_wb, mo_coeff_vir, optimize=True
+    )
 
     # Eq. (10a)
     _, _, v_t = np.linalg.svd(
-        np.dot(mo_coeff_vir_pb.transpose(), np.dot(overlap_pb_wb, mo_coeff_vir)),
+        np.einsum("ji,jk,kl->il", mo_coeff_vir_pb, overlap_pb_wb, mo_coeff_vir, optimize=True),
         full_matrices=True,
     )
     # Eq. (10b)
-    v = v_t.transpose()
-    v_span, v_kern = np.hsplit(v, [num_bf])
+    v_span, v_kern = np.hsplit(v_t.T, [num_bf])
 
     # Eq. (10c)
     mo_coeff_vir_new = np.dot(mo_coeff_vir, v_span)
@@ -359,13 +376,12 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     for _ in range(zeta - 1):
         # Eq. (12a)
         _, _, v_t = np.linalg.svd(
-            np.dot(mo_coeff_vir_new.transpose(), np.dot(fock, mo_coeff_vir_kern)),
+            np.einsum("ji,jk,kl->il", mo_coeff_vir_new, fock, mo_coeff_vir_kern, optimize=True),
             full_matrices=True,
         )
 
         # Eq. (12b)
-        v = v_t.transpose()
-        v_span, v_kern = np.hsplit(v, [mo_coeff_vir_cur.shape[1]])
+        v_span, v_kern = np.hsplit(v_t.T, [mo_coeff_vir_cur.shape[1]])
 
         # Eq. (12c-12d)
         if mo_coeff_vir_kern.shape[1] > mo_coeff_vir_cur.shape[1]:
@@ -373,7 +389,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
             mo_coeff_vir_kern = np.dot(mo_coeff_vir_kern, v_kern)
 
         else:
-            mo_coeff_vir_cur = np.dot(mo_coeff_vir_kern, v)
+            mo_coeff_vir_cur = np.dot(mo_coeff_vir_kern, v_t.T)
             mo_coeff_vir_kern = np.zeros_like(mo_coeff_vir_kern)
 
         # Eq. (12e)
@@ -382,14 +398,14 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
 
     _, eigvecs = np.linalg.eigh(
-        np.dot(mo_coeff_vir_new.transpose(), np.dot(fock, mo_coeff_vir_new))
+        np.einsum("ji,jk,kl->il", mo_coeff_vir_new, fock, mo_coeff_vir_new, optimize=True)
     )
 
     mo_coeff_vir_new = np.dot(mo_coeff_vir_new, eigvecs)
 
     if mo_coeff_vir_kern.shape[1] != 0:
         _, eigvecs = np.linalg.eigh(
-            np.dot(mo_coeff_vir_kern.transpose(), np.dot(fock, mo_coeff_vir_kern))
+            np.einsum("ji,jk,kl->il", mo_coeff_vir_kern, fock, mo_coeff_vir_kern, optimize=True)
         )
 
         mo_coeff_vir_kern = np.dot(mo_coeff_vir_kern, eigvecs)
@@ -421,6 +437,6 @@ def _spade_partition(overlap: np.ndarray, mo_coeff_occ: np.ndarray, num_bf: int,
 
     # 4. use SVD to find the final rotation matrix
     _, _, rot = np.linalg.svd(mo_coeff_tmp, full_matrices=True)
-    left, right = np.hsplit(rot.transpose(), [nocc_a])
+    left, right = np.hsplit(rot.T, [nocc_a])
 
     return np.dot(mo_coeff_occ, left), np.dot(mo_coeff_occ, right)
