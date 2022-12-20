@@ -113,6 +113,9 @@ class ProjectionTransformer(BaseTransformer):
                 overlap, mo_coeff_occ, self.num_basis_functions, nocc_a
             )
 
+        # NOTE: fragment_a will ONLY change if the SCF loop below is necessary to ensure consistent
+        # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
+
         density_b = ElectronicDensity.from_raw_integrals(fragment_b.dot(fragment_b.T))
 
         density_a = ElectronicDensity.from_raw_integrals(fragment_a.dot(fragment_a.T))
@@ -171,6 +174,8 @@ class ProjectionTransformer(BaseTransformer):
             if scf_iter == max_iter:
                 raise Exception("Maximum number of SCF iterations exceeded.")
 
+        # NOTE: from now on fragment_a will no longer change!
+
         # Post iterations
         logger.info("\nSCF converged.")
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
@@ -181,6 +186,8 @@ class ProjectionTransformer(BaseTransformer):
         fock = fock_.alpha["+-"]
 
         mu = 1.0e8
+        # TODO: what exactly is this step in which we subtract a projector?
+        # am I write assuming that this deals with the occupied orbitals of subsystem B?
         fock -= mu * np.einsum(
             "ij,jk,kl->il", overlap, density_b.alpha["+-"], overlap, optimize=True
         )
@@ -237,6 +244,7 @@ class ProjectionTransformer(BaseTransformer):
 
         mo_coeff_vir_a, mo_coeff_vir_b = np.hsplit(mo_coeff_vir_pb, [nvir_a])
 
+        # P^B in Manby2012
         proj_excluded_virts = np.einsum(
             "ij,jk,lk,lm->im", overlap, mo_coeff_vir_b, mo_coeff_vir_b, overlap, optimize=True
         )
@@ -249,6 +257,14 @@ class ProjectionTransformer(BaseTransformer):
         logger.debug("nmo_a = %s", mo_coeff_final.shape[1])
         nocc_a -= self.num_frozen_occupied_orbitals
 
+        # NOTE: at this point fock =  (omitting pre-factors for Coulomb to be RKS/UKS-agnostic)
+        #   h_core + J_A - K_A
+        #   + J_tot - xc_fac * K_tot + Vxc_tot
+        #   - (J_A - xc_fac * K_A + Vxc_A)
+        #   - mu * P_B_occ  # TODO: why minus? An artefact from how the computation is done above?
+        #   + mu * P_B_vir
+        # NOTE: this matches Eq. (3) from Many2012 with the additional J_A and K_A terms;
+        # these are included to take the 2-body terms into account
         orbital_energy_mat = np.einsum(
             "ji,jk,kl->il", mo_coeff_final, fock, mo_coeff_final, optimize=True
         )
@@ -263,6 +279,8 @@ class ProjectionTransformer(BaseTransformer):
         )
 
         new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
+        # now, new_hamiltonian is simply the hamiltonian we started with but transformed into the
+        # projected MO basis (which is limited to subsystem A)
 
         only_a = ElectronicDensity.from_raw_integrals(
             np.diag([1.0 if i < nocc_a else 0.0 for i in range(mo_coeff_final.shape[1])])
@@ -279,10 +297,13 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final RHF A Energy        : %.14f [Eh]", e_new_a_only)
         logger.info("Final RHF A Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
 
+        # next, we subtract the fock operator from the hamiltonian which subtracts h + J_A - K_A
         new_hamiltonian.electronic_integrals -= new_hamiltonian.fock(only_a)
+        # and finally we add the diagonal matrix containing the orbital energies
         new_hamiltonian.electronic_integrals += ElectronicIntegrals.from_raw_integrals(
             np.diag(orbital_energy)
         )
+        # TODO: to verify: this re-adds the contributions from h + J_tot - K_tot + \mu * P_B
 
         e_new_a_only = ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
