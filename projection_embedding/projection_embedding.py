@@ -302,6 +302,7 @@ class ProjectionTransformer(BaseTransformer):
 def _fock_build_a(density_a, density_b, hamiltonian):
     density_tot = density_a + density_b
 
+    # NOTE: in the DFT case, these need to include the XC components
     fock_a = hamiltonian.fock(density_a)
     fock_tot = hamiltonian.fock(density_tot)
 
@@ -317,9 +318,12 @@ def _fock_build_a(density_a, density_b, hamiltonian):
         fock_a + h_core,
         density_a,
     )
+    # TODO: in the DFT case we need to additionally deal with the XC components
+    # we can handle this via an optional callback
 
     # NOTE: the following is written as it is because this reflects better how DFT will differ
-    fock_final = fock_a + (fock_tot - h_core) - (fock_a - h_core)
+    fock_final = hamiltonian.fock(density_a)  # NOTE: this should NOT contain any XC components
+    fock_final += (fock_tot - h_core) - (fock_a - h_core)
 
     return fock_final, e_low_level.alpha[""]
 
