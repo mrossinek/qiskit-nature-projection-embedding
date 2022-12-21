@@ -108,6 +108,7 @@ class ProjectionTransformer(BaseTransformer):
 
         # TODO: this cannot be optional, right? Otherwise the fragments remain all-zero...
         # Maybe the idea was to allow exchanging SPADE with another localization scheme?
+        # TODO: make standalone orbital localization method which can be overwritten by the user
         if self.do_spade:
             fragment_a, fragment_b = _spade_partition(
                 overlap, mo_coeff_occ, self.num_basis_functions, nocc_a
@@ -206,6 +207,8 @@ class ProjectionTransformer(BaseTransformer):
 
         # orthogonalization procedure
         # TODO: which procedure is this exactly and when does it become necessary? In the DFT case?
+        # indeed, this is not triggered in the HF-case because the orbitals are already orthogonal
+        # (at least for systems known to us)
         if nonorthogonal:
             mo_coeff_vir_projected = mo_coeff_vir - mo_coeff_projected
 
@@ -261,7 +264,7 @@ class ProjectionTransformer(BaseTransformer):
         #   h_core + J_A - K_A
         #   + J_tot - xc_fac * K_tot + Vxc_tot
         #   - (J_A - xc_fac * K_A + Vxc_A)
-        #   - mu * P_B_occ  # TODO: why minus? An artefact from how the computation is done above?
+        #   - mu * P_B_occ
         #   + mu * P_B_vir
         # NOTE: this matches Eq. (3) from Many2012 with the additional J_A and K_A terms;
         # these are included to take the 2-body terms into account
@@ -304,6 +307,8 @@ class ProjectionTransformer(BaseTransformer):
             np.diag(orbital_energy)
         )
         # TODO: to verify: this re-adds the contributions from h + J_tot - K_tot + \mu * P_B
+        # this is a trick to avoid double counting
+        # new_hamiltonian now equals h_{A in B} (see Eq. (3) in Manby2012)
 
         e_new_a_only = ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
@@ -394,6 +399,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     # Eq. (10d)
     mo_coeff_vir_kern = np.dot(mo_coeff_vir, v_kern)
 
+    # zeta controls the number of unoccupied orbitals
     for _ in range(zeta - 1):
         # Eq. (12a)
         _, _, v_t = np.linalg.svd(
@@ -416,6 +422,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         # Eq. (12e)
         mo_coeff_vir_new = np.hstack((mo_coeff_vir_new, mo_coeff_vir_cur))
 
+    # post-processing step
     logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
 
     _, eigvecs = np.linalg.eigh(
