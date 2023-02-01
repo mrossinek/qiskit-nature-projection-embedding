@@ -141,6 +141,8 @@ class ProjectionTransformer(BaseTransformer):
         e_nuc = hamiltonian.nuclear_repulsion_energy
 
         # TODO: is this SCF loop necessary in the HF case?
+        # NOTE: yes this is not necessary for HF and only ensures that a *-in-DFT embedding is
+        # self-consistent before starting
         for scf_iter in range(1, max_iter + 1):
 
             _, mo_coeff_a_full = la.eigh(fock.alpha["+-"], overlap)
@@ -188,7 +190,9 @@ class ProjectionTransformer(BaseTransformer):
 
         mu = 1.0e8
         # TODO: what exactly is this step in which we subtract a projector?
-        # am I write assuming that this deals with the occupied orbitals of subsystem B?
+        # am I right assuming that this deals with the occupied orbitals of subsystem B?
+        # NOTE: indeed this projects the occupied space of the environment (B) into a high energetic
+        # space, thereby separating the fragment from its environment
         fock -= mu * np.einsum(
             "ij,jk,kl->il", overlap, density_b.alpha["+-"], overlap, optimize=True
         )
@@ -207,8 +211,8 @@ class ProjectionTransformer(BaseTransformer):
 
         # orthogonalization procedure
         # TODO: which procedure is this exactly and when does it become necessary? In the DFT case?
-        # indeed, this is not triggered in the HF-case because the orbitals are already orthogonal
-        # (at least for systems known to us)
+        # NOTE: indeed, this is not triggered in the HF-case because the orbitals are already
+        # orthogonal (at least for systems known to us)
         if nonorthogonal:
             mo_coeff_vir_projected = mo_coeff_vir - mo_coeff_projected
 
