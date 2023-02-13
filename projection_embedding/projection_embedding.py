@@ -84,6 +84,14 @@ class ProjectionTransformer(BaseTransformer):
         # TODO: assert AO basis
 
         hamiltonian = problem.hamiltonian
+        # TODO: hamiltonian.fock does not work as expected for unrestricted spin systems because the
+        # hamiltonian is in the AO basis and, thus, has no beta or beta_alpha 2-body terms
+        # associated with it yet...
+        if not self.basis_transformer.coefficients.beta.is_empty():
+            hamiltonian.electronic_integrals.beta = hamiltonian.electronic_integrals.alpha
+            hamiltonian.electronic_integrals.beta_alpha = (
+                hamiltonian.electronic_integrals.two_body.alpha
+            )
 
         if isinstance(self.num_electrons, tuple):
             nalpha, nbeta = self.num_electrons
@@ -429,6 +437,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final RHF A eff Energy        : %.14f [Eh]", e_new_a_only)
         logger.info("Final RHF A eff Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
 
+        print(e_new_a, e_new_a_only)
         new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
         new_hamiltonian.constants["ProjectionTransformer"] = -1.0 * float(e_new_a_only)
 
