@@ -124,7 +124,11 @@ class ProjectionTransformer(BaseTransformer):
         # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
 
         density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
+        if density_a.beta.is_empty():
+            density_a.beta = density_a.alpha
         density_b = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_b, fragment_b)
+        if density_b.beta.is_empty():
+            density_b.beta = density_b.alpha
 
         fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
@@ -179,7 +183,7 @@ class ProjectionTransformer(BaseTransformer):
                 {"ij,jk,lk->il": ("+-",) * 4}, projector, fock_, projector
             )
 
-            e_new_a_ints = ElectronicIntegrals.einsum(
+            e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
                 hamiltonian.electronic_integrals.one_body + hamiltonian.fock(density_a),
                 density_a,
@@ -399,7 +403,7 @@ class ProjectionTransformer(BaseTransformer):
             else None,
         )
 
-        e_new_a_only = ElectronicIntegrals.einsum(
+        e_new_a_only = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
             new_hamiltonian.electronic_integrals.one_body + new_hamiltonian.fock(only_a),
             only_a,
@@ -422,7 +426,7 @@ class ProjectionTransformer(BaseTransformer):
         # this is a trick to avoid double counting
         # new_hamiltonian now equals h_{A in B} (see Eq. (3) in Manby2012)
 
-        e_new_a_only = ElectronicIntegrals.einsum(
+        e_new_a_only = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
             new_hamiltonian.electronic_integrals.one_body + new_hamiltonian.fock(only_a),
             only_a,
@@ -437,7 +441,6 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final RHF A eff Energy        : %.14f [Eh]", e_new_a_only)
         logger.info("Final RHF A eff Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
 
-        print(e_new_a, e_new_a_only)
         new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
         new_hamiltonian.constants["ProjectionTransformer"] = -1.0 * float(e_new_a_only)
 
@@ -474,12 +477,12 @@ def _fock_build_a(
 
     h_core = hamiltonian.electronic_integrals.one_body
 
-    e_low_level = ElectronicIntegrals.einsum(
+    e_low_level = 0.5 * ElectronicIntegrals.einsum(
         {"ij,ji": ("+-", "+-", "")},
         fock_tot + h_core,
         density_tot,
     )
-    e_low_level -= ElectronicIntegrals.einsum(
+    e_low_level -= 0.5 * ElectronicIntegrals.einsum(
         {"ij,ji": ("+-", "+-", "")},
         fock_a + h_core,
         density_a,
