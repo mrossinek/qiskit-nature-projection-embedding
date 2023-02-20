@@ -23,7 +23,12 @@ import scipy.linalg as la
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy, Hamiltonian
 from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
 from qiskit_nature.second_q.problems import BaseProblem, ElectronicBasis, ElectronicStructureProblem
-from qiskit_nature.second_q.properties import ElectronicDensity
+from qiskit_nature.second_q.properties import (
+    ElectronicDensity,
+    AngularMomentum,
+    Magnetization,
+    ParticleNumber,
+)
 from qiskit_nature.utils import symmetric_orthogonalization
 
 from .base_transformer import BaseTransformer
@@ -98,23 +103,41 @@ class ProjectionTransformer(BaseTransformer):
         else:
             nbeta = self.num_electrons // 2
             nalpha = self.num_electrons - nbeta
+        print("nalpha", nalpha, "nbeta", nbeta)
 
-        num_elec_env = sum(problem.num_particles) - (nalpha + nbeta)
         nao = self.basis_transformer.coefficients.alpha.register_length
-        nocc_a = (nalpha + nbeta) // 2
-        nocc_b = num_elec_env // 2
-        nocc = nocc_a + nocc_b
+        nocc_a_alpha = nalpha
+        nocc_a_beta = nbeta
+        nocc_b_alpha = problem.num_alpha - nalpha
+        nocc_b_beta = problem.num_beta - nbeta
+        print(f"nocc_a_alpha {nocc_a_alpha}, nocc_a_beta {nocc_a_beta}")
+        print(f"nocc_b_alpha {nocc_b_alpha}, nocc_b_beta {nocc_b_beta}")
 
-        mo_coeff_occ_ints, mo_coeff_vir_ints = self.basis_transformer.coefficients.split(
-            np.hsplit, [nocc], validate=False
+        (
+            mo_coeff_occ_ints_alpha,
+            mo_coeff_vir_ints_alpha,
+        ) = self.basis_transformer.coefficients.alpha.split(
+            np.hsplit, [nocc_a_alpha + nocc_b_alpha], validate=False
         )
+
+        mo_coeff_occ_ints_b, mo_coeff_vir_ints_b = None, None
+        if not self.basis_transformer.coefficients.beta.is_empty():
+            (
+                mo_coeff_occ_ints_b,
+                mo_coeff_vir_ints_b,
+            ) = self.basis_transformer.coefficients.beta.split(
+                np.hsplit, [nocc_a_beta + nocc_b_beta], validate=False
+            )
+
+        mo_coeff_occ_ints = ElectronicIntegrals(mo_coeff_occ_ints_alpha, mo_coeff_occ_ints_b)
+        mo_coeff_vir_ints = ElectronicIntegrals(mo_coeff_vir_ints_alpha, mo_coeff_vir_ints_b)
 
         overlap = problem.overlap_matrix
         overlap[np.abs(overlap) < 1e-12] = 0.0
 
         # TODO: make localization method configurable
         fragment_a, fragment_b = _spade_partition(
-            overlap, mo_coeff_occ_ints, self.num_basis_functions, nocc_a
+            overlap, mo_coeff_occ_ints, self.num_basis_functions, (nocc_a_alpha, nocc_a_beta)
         )
 
         # NOTE: now we wrap the overlap matrix into ElectronicIntegrals to simplify handling later
@@ -170,7 +193,14 @@ class ProjectionTransformer(BaseTransformer):
                 mo_coeff_a_full_alpha, h1_b=mo_coeff_a_full_beta, validate=False
             )
 
-            fragment_a, _ = mo_coeff_a_full.split(np.hsplit, [nocc_a], validate=False)
+            fragment_a_alpha, _ = mo_coeff_a_full.alpha.split(
+                np.hsplit, [nocc_a_alpha], validate=False
+            )
+            fragment_a_beta, _ = mo_coeff_a_full.beta.split(
+                np.hsplit, [nocc_a_beta], validate=False
+            )
+
+            fragment_a = ElectronicIntegrals(fragment_a_alpha, fragment_a_beta)
 
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
 
@@ -198,6 +228,7 @@ class ProjectionTransformer(BaseTransformer):
             )
 
             logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
+            print("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
 
             # SCF Converged?
             if abs(e_new_a - e_old) < e_thres:
@@ -364,10 +395,14 @@ class ProjectionTransformer(BaseTransformer):
         nmo_a = mo_coeff_final.alpha["+-"].shape[1]
         logger.debug("nmo_a = %s", nmo_a)
 
+        print(mo_coeff_final.alpha)
+        print(mo_coeff_final.beta)
+
         if "+-" in mo_coeff_final.beta and nmo_a != mo_coeff_final.beta["+-"].shape[1]:
             raise NotImplementedError("TODO.")
 
-        nocc_a -= self.num_frozen_occupied_orbitals
+        nocc_a_alpha -= self.num_frozen_occupied_orbitals
+        nocc_a_beta -= self.num_frozen_occupied_orbitals
 
         # NOTE: at this point fock =  (omitting pre-factors for Coulomb to be RKS/UKS-agnostic)
         #   h_core + J_A - K_A
@@ -396,9 +431,8 @@ class ProjectionTransformer(BaseTransformer):
         # projected MO basis (which is limited to subsystem A)
 
         only_a = ElectronicDensity.from_raw_integrals(
-            np.diag([1.0 if i < nocc_a else 0.0 for i in range(nmo_a)]),
-            # TODO: extend nocc_a to distinguish alpha and beta
-            h1_b=np.diag([1.0 if i < nocc_a else 0.0 for i in range(nmo_a)])
+            np.diag([1.0 if i < nocc_a_alpha else 0.0 for i in range(nmo_a)]),
+            h1_b=np.diag([1.0 if i < nocc_a_beta else 0.0 for i in range(nmo_a)])
             if not mo_coeff_final.beta.is_empty()
             else None,
         )
@@ -444,24 +478,18 @@ class ProjectionTransformer(BaseTransformer):
         new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
         new_hamiltonian.constants["ProjectionTransformer"] = -1.0 * float(e_new_a_only)
 
-        if logger.isEnabledFor(logging.INFO):
-
-            from qiskit_nature.second_q.algorithms.initial_points.mp2_initial_point import (
-                _compute_mp2,
-            )
-
-            # TODO: extend to unrestricted spin once MP2 supports that
-            _, e_mp2 = _compute_mp2(
-                nocc_a,
-                new_hamiltonian.electronic_integrals.two_body.alpha["++--"],
-                np.diag(orbital_energy.alpha["+-"]),
-            )
-
-            logger.info("e_mp2 = %4.10f", e_mp2)
-
         result = ElectronicStructureProblem(new_hamiltonian)
-        result.num_particles = (nalpha + nbeta) - (self.num_frozen_occupied_orbitals * 2)
+        result.num_particles = (
+            nalpha - self.num_frozen_occupied_orbitals,
+            nbeta - self.num_frozen_occupied_orbitals,
+        )
         result.num_spatial_orbitals = nmo_a
+
+        for prop in problem.properties:
+            if isinstance(prop, (AngularMomentum, Magnetization, ParticleNumber)):
+                result.properties.add(prop.__class__(result.num_spatial_orbitals))
+            else:
+                logger.warning("Encountered an unsupported property of type '%s'.", type(prop))
 
         return result
 
@@ -661,7 +689,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
 
 
 def _spade_partition(
-    overlap: np.ndarray, mo_coeff_occ: ElectronicIntegrals, num_bf: int, nocc_a: int
+    overlap: np.ndarray, mo_coeff_occ: ElectronicIntegrals, num_bf: int, nocc_a: tuple[int, int]
 ):
     logger.info("")
     logger.info("Doing SPADE partitioning")
@@ -691,7 +719,13 @@ def _spade_partition(
 
     rot = ElectronicIntegrals.from_raw_integrals(rot_alpha, h1_b=rot_beta, validate=False)
     rot_t = ElectronicIntegrals.apply(np.transpose, rot, validate=False)
-    left, right = rot_t.split(np.hsplit, [nocc_a], validate=False)
+    nocc_a_alpha, nocc_a_beta = nocc_a
+    left_a, right_a = rot_t.alpha.split(np.hsplit, [nocc_a_alpha], validate=False)
+    left_b, right_b = None, None
+    if not rot_t.beta.is_empty():
+        left_b, right_b = rot_t.beta.split(np.hsplit, [nocc_a_beta], validate=False)
+    left = ElectronicIntegrals(left_a, left_b, validate=False)
+    right = ElectronicIntegrals(right_a, right_b, validate=False)
 
     return (
         ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, left, validate=False),
