@@ -99,17 +99,14 @@ class ProjectionTransformer(BaseTransformer):
             )
 
         if isinstance(self.num_electrons, tuple):
-            nalpha, nbeta = self.num_electrons
+            nocc_a_alpha, nocc_a_beta = self.num_electrons
         else:
-            nbeta = self.num_electrons // 2
-            nalpha = self.num_electrons - nbeta
-        print("nalpha", nalpha, "nbeta", nbeta)
+            nocc_a_beta = self.num_electrons // 2
+            nocc_a_alpha = self.num_electrons - nocc_a_beta
 
         nao = self.basis_transformer.coefficients.alpha.register_length
-        nocc_a_alpha = nalpha
-        nocc_a_beta = nbeta
-        nocc_b_alpha = problem.num_alpha - nalpha
-        nocc_b_beta = problem.num_beta - nbeta
+        nocc_b_alpha = problem.num_alpha - nocc_a_alpha
+        nocc_b_beta = problem.num_beta - nocc_a_beta
         print(f"nocc_a_alpha {nocc_a_alpha}, nocc_a_beta {nocc_a_beta}")
         print(f"nocc_b_alpha {nocc_b_alpha}, nocc_b_beta {nocc_b_beta}")
 
@@ -146,21 +143,24 @@ class ProjectionTransformer(BaseTransformer):
         # NOTE: fragment_a will ONLY change if the SCF loop below is necessary to ensure consistent
         # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
 
+        print("fragment_a.alpha['+-'][0, 0]", fragment_a.alpha["+-"][0, 0])
         density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
         if density_a.beta.is_empty():
             density_a.beta = density_a.alpha
         density_b = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_b, fragment_b)
         if density_b.beta.is_empty():
             density_b.beta = density_b.alpha
+        print("density_a.alpha['+-'][0, 0]", density_a.alpha["+-"][0, 0])
 
-        fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+        fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+        print("e_low_level", e_low_level)
 
         identity = ElectronicIntegrals.from_raw_integrals(np.identity(nao))
         projector = identity - ElectronicIntegrals.einsum(
             {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
         )
         fock = ElectronicIntegrals.einsum(
-            {"ij,jk,lk->il": ("+-",) * 4}, projector, fock_, projector
+            {"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector
         )
 
         e_old = 0
@@ -202,15 +202,18 @@ class ProjectionTransformer(BaseTransformer):
 
             fragment_a = ElectronicIntegrals(fragment_a_alpha, fragment_a_beta)
 
+            print("fragment_a.alpha['+-'][0, 0]", fragment_a.alpha["+-"][0, 0])
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
+            print("density_a.alpha['+-'][0, 0]", density_a.alpha["+-"][0, 0])
 
-            fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+            fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+            print("e_low_level", e_low_level)
 
             projector = identity - ElectronicIntegrals.einsum(
                 {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
             )
             fock = ElectronicIntegrals.einsum(
-                {"ij,jk,lk->il": ("+-",) * 4}, projector, fock_, projector
+                {"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector
             )
 
             e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
@@ -245,7 +248,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         # post convergence wrapup
-        fock_, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+        fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
         mu = 1.0e8
         # TODO: what exactly is this step in which we subtract a projector?
@@ -279,6 +282,8 @@ class ProjectionTransformer(BaseTransformer):
         # orthogonal (at least for systems known to us)
         # TODO: extract into a separate method because this is only necessary for DFT
         if nonorthogonal:
+            # method related to projectedo atomic orbitals (PAOs)
+            # P. Pulay, Chem. Phys. Lett. 100, 151 (1983).
             mo_coeff_vir_projected = mo_coeff_vir_ints - mo_coeff_projected
 
             einsummed = ElectronicIntegrals.einsum(
@@ -480,8 +485,8 @@ class ProjectionTransformer(BaseTransformer):
 
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = (
-            nalpha - self.num_frozen_occupied_orbitals,
-            nbeta - self.num_frozen_occupied_orbitals,
+            nocc_a_alpha,
+            nocc_a_beta,
         )
         result.num_spatial_orbitals = nmo_a
 
@@ -712,13 +717,14 @@ def _spade_partition(
     rot_alpha: np.ndarray = None
     if "+-" in mo_coeff_tmp.alpha:
         _, _, rot_alpha = np.linalg.svd(mo_coeff_tmp.alpha["+-"], full_matrices=True)
+        rot_alpha = rot_alpha.T
 
     rot_beta: np.ndarray = None
     if "+-" in mo_coeff_tmp.beta:
         _, _, rot_beta = np.linalg.svd(mo_coeff_tmp.beta["+-"], full_matrices=True)
+        rot_beta = rot_beta.T
 
-    rot = ElectronicIntegrals.from_raw_integrals(rot_alpha, h1_b=rot_beta, validate=False)
-    rot_t = ElectronicIntegrals.apply(np.transpose, rot, validate=False)
+    rot_t = ElectronicIntegrals.from_raw_integrals(rot_alpha, h1_b=rot_beta, validate=False)
     nocc_a_alpha, nocc_a_beta = nocc_a
     left_a, right_a = rot_t.alpha.split(np.hsplit, [nocc_a_alpha], validate=False)
     left_b, right_b = None, None

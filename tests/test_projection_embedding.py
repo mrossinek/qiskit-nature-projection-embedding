@@ -123,6 +123,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         # trafo = ProjectionTransformer(14, 10, 5, 8, basis_trafo)
         problem = trafo.transform(problem)
         print(problem.num_particles)
+        print(problem.num_spatial_orbitals)
 
         # with self.subTest("alpha coefficients"):
         #     prev_atol = PolynomialTensor.atol
@@ -658,7 +659,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         print(problem.num_particles)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(4, 2, 0, 0, basis_trafo)
+        trafo = ProjectionTransformer(4, 5, 0, 0, basis_trafo)
         problem = trafo.transform(problem)
         print(problem.num_particles)
 
@@ -695,7 +696,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         print(problem.num_particles)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer((3, 1), 3, 0, 0, basis_trafo)
+        trafo = ProjectionTransformer((3, 1), 5, 0, 0, basis_trafo)
         problem = trafo.transform(problem)
         print(problem.num_particles)
 
