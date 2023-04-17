@@ -132,6 +132,8 @@ class ProjectionTransformer(BaseTransformer):
         overlap = problem.overlap_matrix
         overlap[np.abs(overlap) < 1e-12] = 0.0
 
+        A = ElectronicIntegrals.from_raw_integrals(symmetric_orthogonalization(overlap))
+
         # TODO: make localization method configurable
         fragment_a, fragment_b = _spade_partition(
             overlap, mo_coeff_occ_ints, self.num_basis_functions, (nocc_a_alpha, nocc_a_beta)
@@ -143,14 +145,12 @@ class ProjectionTransformer(BaseTransformer):
         # NOTE: fragment_a will ONLY change if the SCF loop below is necessary to ensure consistent
         # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
 
-        print("fragment_a.alpha['+-'][0, 0]", fragment_a.alpha["+-"][0, 0])
         density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
         if density_a.beta.is_empty():
             density_a.beta = density_a.alpha
         density_b = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_b, fragment_b)
         if density_b.beta.is_empty():
             density_b.beta = density_b.alpha
-        print("density_a.alpha['+-'][0, 0]", density_a.alpha["+-"][0, 0])
 
         fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
         print("e_low_level", e_low_level)
@@ -159,6 +159,10 @@ class ProjectionTransformer(BaseTransformer):
         projector = identity - ElectronicIntegrals.einsum(
             {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
         )
+        print("projector.alpha")
+        print(projector.alpha)
+        print("projector.beta")
+        print(projector.beta)
         fock = ElectronicIntegrals.einsum(
             {"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector
         )
@@ -167,6 +171,29 @@ class ProjectionTransformer(BaseTransformer):
         # TODO: make these configurable
         e_thres = 1e-7
         max_iter = 50
+
+        fock_list = []
+        diis_error = []
+
+        # diis_e = ElectronicIntegrals.einsum(
+        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
+        #     fock,
+        #     density_a,
+        #     overlap,
+        # ) - ElectronicIntegrals.einsum(
+        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
+        #     overlap,
+        #     density_a,
+        #     fock,
+        # )
+        # diis_e = ElectronicIntegrals.einsum(
+        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
+        #     A,
+        #     diis_e,
+        #     A
+        # )
+        # fock_list.append(fock)
+        # diis_error.append(diis_e)
 
         logger.info("")
         logger.info(" Hartree-Fock for subsystem A Energy")
@@ -179,7 +206,6 @@ class ProjectionTransformer(BaseTransformer):
         # NOTE: we do need at least one iteration here because this computes e_new_a
         # TODO: actually make this SCF loop a standalone method
         for scf_iter in range(1, max_iter + 1):
-
             # TODO: improve the following 7 lines
             mo_coeff_a_full_alpha: np.ndarray = None
             if "+-" in fock.alpha:
@@ -202,9 +228,7 @@ class ProjectionTransformer(BaseTransformer):
 
             fragment_a = ElectronicIntegrals(fragment_a_alpha, fragment_a_beta)
 
-            print("fragment_a.alpha['+-'][0, 0]", fragment_a.alpha["+-"][0, 0])
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
-            print("density_a.alpha['+-'][0, 0]", density_a.alpha["+-"][0, 0])
 
             fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
             print("e_low_level", e_low_level)
@@ -230,13 +254,96 @@ class ProjectionTransformer(BaseTransformer):
                 + e_nuc
             )
 
+            diis_e = ElectronicIntegrals.einsum(
+                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
+                fock,
+                density_a,
+                overlap,
+            ) - ElectronicIntegrals.einsum(
+                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
+                overlap,
+                density_a,
+                fock,
+            )
+            diis_e = ElectronicIntegrals.einsum(
+                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
+                projector,
+                diis_e,
+                projector
+            )
+
+            fock_list.append(fock)
+            diis_error.append(diis_e)
+            dRMS_a = np.mean(diis_e.one_body.alpha["+-"]**2)**0.5
+            dRMS_b = np.mean(diis_e.one_body.beta["+-"]**2)**0.5
+            print(dRMS_a, dRMS_b)
+
             logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
             print("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
 
             # SCF Converged?
-            if abs(e_new_a - e_old) < e_thres:
+            if abs(e_new_a - e_old) < e_thres and (dRMS_a < 1e-3 and dRMS_b < 1e-3):
                 break
             e_old = e_new_a
+
+            if scf_iter >= 1:
+                # DIIS
+
+                diis_count = len(fock_list)
+                if diis_count > 6:
+                    del fock_list[0]
+                    del diis_error[0]
+                    diis_count -= 1
+
+                B_a = np.empty((diis_count + 1, diis_count + 1))
+                B_a[-1, :] = -1
+                B_a[:, -1] = -1
+                B_a[-1, -1] = 0
+                for num1, e1 in enumerate(diis_error):
+                    for num2, e2 in enumerate(diis_error):
+                        if num2 > num1:
+                            continue
+                        val = np.einsum("ij,ij->", e1.alpha["+-"], e2.alpha["+-"])
+                        B_a[num1, num2] = val
+                        B_a[num2, num1] = val
+
+                B_a[:-1, :-1] /= np.abs(B_a[:-1, :-1]).max()
+
+                resid_a = np.zeros(diis_count + 1)
+                resid_a[-1] = -1
+
+                ci_a = np.linalg.solve(B_a, resid_a)
+                print("ci_a", ci_a)
+
+                fock_a = np.zeros_like(fock.alpha["+-"])
+                for num, c in enumerate(ci_a[:-1]):
+                    fock_a += c * fock_list[num].alpha["+-"]
+
+                B_b = np.empty((diis_count + 1, diis_count + 1))
+                B_b[-1, :] = -1
+                B_b[:, -1] = -1
+                B_b[-1, -1] = 0
+                for num1, e1 in enumerate(diis_error):
+                    for num2, e2 in enumerate(diis_error):
+                        if num2 > num1:
+                            continue
+                        val = np.einsum("ij,ij->", e1.beta["+-"], e2.beta["+-"])
+                        B_b[num1, num2] = val
+                        B_b[num2, num1] = val
+
+                B_b[:-1, :-1] /= np.abs(B_b[:-1, :-1]).max()
+
+                resid_b = np.zeros(diis_count + 1)
+                resid_b[-1] = -1
+
+                ci_b = np.linalg.solve(B_b, resid_b)
+                print("ci_b", ci_b)
+
+                fock_b = np.zeros_like(fock.beta["+-"])
+                for num, c in enumerate(ci_b[:-1]):
+                    fock_b += c * fock_list[num].beta["+-"]
+
+                fock = ElectronicIntegrals.from_raw_integrals(fock_a, h1_b=fock_b)
 
             if scf_iter == max_iter:
                 raise Exception("Maximum number of SCF iterations exceeded.")
@@ -400,9 +507,6 @@ class ProjectionTransformer(BaseTransformer):
         nmo_a = mo_coeff_final.alpha["+-"].shape[1]
         logger.debug("nmo_a = %s", nmo_a)
 
-        print(mo_coeff_final.alpha)
-        print(mo_coeff_final.beta)
-
         if "+-" in mo_coeff_final.beta and nmo_a != mo_coeff_final.beta["+-"].shape[1]:
             raise NotImplementedError("TODO.")
 
@@ -511,12 +615,12 @@ def _fock_build_a(
     h_core = hamiltonian.electronic_integrals.one_body
 
     e_low_level = 0.5 * ElectronicIntegrals.einsum(
-        {"ij,ji": ("+-", "+-", "")},
+        {"ij,ij": ("+-", "+-", "")},
         fock_tot + h_core,
         density_tot,
     )
     e_low_level -= 0.5 * ElectronicIntegrals.einsum(
-        {"ij,ji": ("+-", "+-", "")},
+        {"ij,ij": ("+-", "+-", "")},
         fock_a + h_core,
         density_a,
     )
