@@ -87,9 +87,6 @@ class ProjectionTransformer(BaseTransformer):
 
         # TODO: assert AO basis
 
-        logger.info(problem.num_spatial_orbitals)
-        logger.info(problem.num_particles)
-
         hamiltonian = problem.hamiltonian
         # TODO: hamiltonian.fock does not work as expected for unrestricted spin systems because the
         # hamiltonian is in the AO basis and, thus, has no beta or beta_alpha 2-body terms
@@ -109,8 +106,6 @@ class ProjectionTransformer(BaseTransformer):
         nao = self.basis_transformer.coefficients.alpha.register_length
         nocc_b_alpha = problem.num_alpha - nocc_a_alpha
         nocc_b_beta = problem.num_beta - nocc_a_beta
-        logger.info(f"nocc_a_alpha {nocc_a_alpha}, nocc_a_beta {nocc_a_beta}")
-        logger.info(f"nocc_b_alpha {nocc_b_alpha}, nocc_b_beta {nocc_b_beta}")
 
         (
             mo_coeff_occ_ints_alpha,
@@ -134,8 +129,6 @@ class ProjectionTransformer(BaseTransformer):
         overlap = problem.overlap_matrix
         overlap[np.abs(overlap) < 1e-12] = 0.0
 
-        A = ElectronicIntegrals.from_raw_integrals(symmetric_orthogonalization(overlap))
-
         # TODO: make localization method configurable
         fragment_a, fragment_b = _spade_partition(
             overlap, mo_coeff_occ_ints, self.num_basis_functions, (nocc_a_alpha, nocc_a_beta)
@@ -155,7 +148,7 @@ class ProjectionTransformer(BaseTransformer):
             density_b.beta = density_b.alpha
 
         fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
-        logger.info("e_low_level", e_low_level)
+        logger.debug("e_low_level", e_low_level)
 
         e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
@@ -170,15 +163,7 @@ class ProjectionTransformer(BaseTransformer):
             + e_low_level
             + hamiltonian.nuclear_repulsion_energy
         )
-        logger.info("e_new_a", e_new_a)
-        logger.info(
-            "NOTE: up to here the energy is still correct which means divergence happens later"
-        )
-
-        logger.info("density_b.alpha")
-        logger.info(density_b.alpha)
-        logger.info("density_b.beta")
-        logger.info(density_b.beta)
+        logger.debug("e_new_a", e_new_a)
 
         identity = ElectronicIntegrals.from_raw_integrals(
             np.identity(nao), h1_b=None if density_b.beta.is_empty() else np.identity(nao)
@@ -186,12 +171,6 @@ class ProjectionTransformer(BaseTransformer):
         projector = identity - ElectronicIntegrals.einsum(
             {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
         )
-        logger.info("projector.alpha")
-        logger.info(projector.alpha)
-        logger.info("projector.beta")
-        logger.info(projector.beta)
-        logger.info("projector.alpha - beta")
-        logger.info(projector.alpha - projector.beta)
         fock = ElectronicIntegrals.einsum({"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector)
 
         e_old = 0
@@ -227,21 +206,8 @@ class ProjectionTransformer(BaseTransformer):
 
         e_nuc = hamiltonian.nuclear_repulsion_energy
 
-        # TODO: is this SCF loop necessary in the HF case?
-        # NOTE: yes this is not necessary for HF and only ensures that a *-in-DFT embedding is
-        # self-consistent before starting
-        # NOTE: we do need at least one iteration here because this computes e_new_a
         # TODO: actually make this SCF loop a standalone method
         for scf_iter in range(1, max_iter + 1):
-
-            logger.info("+++++++++++++++++++++++")
-            logger.info(
-                "Fock_a symmetric", np.allclose(fock.alpha["+-"], fock.alpha["+-"].transpose())
-            )
-            logger.info(
-                "Fock_b symmetric", np.allclose(fock.beta["+-"], fock.beta["+-"].transpose())
-            )
-            logger.info("+++++++++++++++++++++++")
 
             # TODO: improve the following 7 lines
             mo_coeff_a_full_alpha: np.ndarray = None
@@ -256,9 +222,6 @@ class ProjectionTransformer(BaseTransformer):
                 mo_coeff_a_full_alpha, h1_b=mo_coeff_a_full_beta, validate=False
             )
 
-            # TODO: fragment_a_alpha seems to be at fault for the unrestricted spin issues because
-            # not overwriting it here results in normal convergence (i.e. fragment_a_beta works
-            # fine)
             fragment_a_alpha, _ = mo_coeff_a_full.alpha.split(
                 np.hsplit, [nocc_a_alpha], validate=False
             )
@@ -271,7 +234,7 @@ class ProjectionTransformer(BaseTransformer):
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
 
             fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
-            logger.info("e_low_level", e_low_level)
+            logger.debug("e_low_level", e_low_level)
 
             projector = identity - ElectronicIntegrals.einsum(
                 {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
@@ -313,9 +276,8 @@ class ProjectionTransformer(BaseTransformer):
             diis_error.append(diis_e)
             dRMS_a = np.mean(diis_e.one_body.alpha["+-"] ** 2) ** 0.5
             dRMS_b = np.mean(diis_e.one_body.beta["+-"] ** 2) ** 0.5
-            logger.info(dRMS_a, dRMS_b)
+            logger.debug(dRMS_a, dRMS_b)
 
-            logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
             logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
 
             # SCF Converged?
@@ -350,7 +312,6 @@ class ProjectionTransformer(BaseTransformer):
                 resid_a[-1] = -1
 
                 ci_a = np.linalg.solve(B_a, resid_a)
-                logger.info("ci_a", ci_a)
 
                 fock_a = np.zeros_like(fock.alpha["+-"])
                 for num, c in enumerate(ci_a[:-1]):
@@ -374,7 +335,6 @@ class ProjectionTransformer(BaseTransformer):
                 resid_b[-1] = -1
 
                 ci_b = np.linalg.solve(B_b, resid_b)
-                logger.info("ci_b", ci_b)
 
                 fock_b = np.zeros_like(fock.beta["+-"])
                 for num, c in enumerate(ci_b[:-1]):
@@ -395,17 +355,9 @@ class ProjectionTransformer(BaseTransformer):
         fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
 
         mu = 1.0e8
-        # TODO: what exactly is this step in which we subtract a projector?
-        # am I right assuming that this deals with the occupied orbitals of subsystem B?
-        # NOTE: indeed this projects the occupied space of the environment (B) into a high energetic
-        # space, thereby separating the fragment from its environment
         fock -= mu * ElectronicIntegrals.einsum(
             {"ij,jk,kl->il": ("+-",) * 4}, overlap, density_b, overlap
         )
-
-        logger.info("mo_coeff_vir_ints.alpha['+-'].shape", mo_coeff_vir_ints.alpha["+-"].shape)
-        if "+-" in mo_coeff_vir_ints.beta:
-            logger.info("mo_coeff_vir_ints.beta['+-'].shape", mo_coeff_vir_ints.beta["+-"].shape)
 
         density_full = density_a + density_b
         mo_coeff_projected = ElectronicIntegrals.einsum(
@@ -415,10 +367,6 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_vir_ints,
             validate=False,
         )
-
-        logger.info("mo_coeff_projected.alpha['+-'].shape", mo_coeff_projected.alpha["+-"].shape)
-        if "+-" in mo_coeff_projected.beta:
-            logger.info("mo_coeff_projected.beta['+-'].shape", mo_coeff_projected.beta["+-"].shape)
 
         if (
             np.linalg.norm(mo_coeff_projected.alpha["+-"]) < 1e-05
@@ -431,11 +379,7 @@ class ProjectionTransformer(BaseTransformer):
             nonorthogonal = True
 
         # orthogonalization procedure
-        # TODO: which procedure is this exactly and when does it become necessary? In the DFT case?
-        # NOTE: indeed, this is not triggered in the HF-case because the orbitals are already
-        # orthogonal (at least for systems known to us)
-        # TODO: extract into a separate method because this is only necessary for DFT
-        # NOTE: actually this is also relevant e.g. with butyronitrile in triplet spin
+        # TODO: extract this into a separate method
         if nonorthogonal:
             # method related to projected atomic orbitals (PAOs)
             # P. Pulay, Chem. Phys. Lett. 100, 151 (1983).
@@ -500,10 +444,6 @@ class ProjectionTransformer(BaseTransformer):
                 {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_ints, eigvec_fock, validate=False
             )
 
-        logger.info("mo_coeff_vir_ints.alpha['+-'].shape", mo_coeff_vir_ints.alpha["+-"].shape)
-        if "+-" in mo_coeff_vir_ints.beta:
-            logger.info("mo_coeff_vir_ints.beta['+-'].shape", mo_coeff_vir_ints.beta["+-"].shape)
-
         # doing concentric local virtuals
         (
             mo_coeff_vir_pb,
@@ -517,18 +457,10 @@ class ProjectionTransformer(BaseTransformer):
             mo_coeff_vir_ints,
             self.num_basis_functions,
             fock,
-            zeta=1,  # TODO: make configurable and figure out what exactly zeta is meant to do?
         )
-        # TODO: is this where things are going wrong and instead of the nvir numbers differing for
-        # alpha and beta in the B fragment we should ensure they are the same in B but differ in A
-        # (such that in sum they hopefully make the alpha and beta sizes of the A fragment match?
-        logger.info("nvir_a_alpha = %s", nvir_a_alpha)
-        logger.info("nvir_b_alpha = %s", nvir_b_alpha)
-        logger.info("nvir_a_beta = %s", nvir_a_beta)
-        logger.info("nvir_b_beta = %s", nvir_b_beta)
 
-        # TODO: is this really the "hack" that we want/need to do in order to ensure that the
-        # number of alpha- and beta-spin MOs in the A fragment match?
+        # NOTE: we need to correct the number of virtual alpha-spin orbitals in fragment A to take a
+        # potential number of unpaired electrons into account
         nocc_a_delta = nocc_a_alpha - nocc_a_beta
         nvir_a_alpha -= nocc_a_delta
 
@@ -548,13 +480,6 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff_vir_a = ElectronicIntegrals(mo_coeff_vir_a_alpha, mo_coeff_vir_a_beta)
         mo_coeff_vir_b = ElectronicIntegrals(mo_coeff_vir_b_alpha, mo_coeff_vir_b_beta)
 
-        logger.info("mo_coeff_vir_a.alpha['+-'].shape", mo_coeff_vir_a.alpha["+-"].shape)
-        if "+-" in mo_coeff_vir_a.beta:
-            logger.info("mo_coeff_vir_a.beta['+-'].shape", mo_coeff_vir_a.beta["+-"].shape)
-        logger.info("mo_coeff_vir_b.alpha['+-'].shape", mo_coeff_vir_b.alpha["+-"].shape)
-        if "+-" in mo_coeff_vir_b.beta:
-            logger.info("mo_coeff_vir_b.beta['+-'].shape", mo_coeff_vir_b.beta["+-"].shape)
-
         # P^B in Manby2012
         proj_excluded_virts = ElectronicIntegrals.einsum(
             {"ij,jk,lk,lm->im": ("+-",) * 5},
@@ -567,31 +492,14 @@ class ProjectionTransformer(BaseTransformer):
         fock += mu * proj_excluded_virts
 
         max_orb = -self.num_frozen_virtual_orbitals if self.num_frozen_virtual_orbitals else None
-        logger.info("max_orb", max_orb)
 
-        logger.info("self.num_frozen_occupied_orbitals", self.num_frozen_occupied_orbitals)
-        logger.info("self.num_frozen_virtual_orbitals", self.num_frozen_virtual_orbitals)
-        logger.info("fragment_a.alpha['+-'].shape", fragment_a.alpha["+-"].shape)
-        logger.info("mo_coeff_vir_a.alpha['+-'].shape", mo_coeff_vir_a.alpha["+-"].shape)
-        if "+-" in fragment_a.beta:
-            logger.info("fragment_a.beta['+-'].shape", fragment_a.beta["+-"].shape)
-            logger.info("mo_coeff_vir_a.beta['+-'].shape", mo_coeff_vir_a.beta["+-"].shape)
-
-        q, mo_coeff_final, p = ElectronicIntegrals.stack(
+        _, mo_coeff_final, _ = ElectronicIntegrals.stack(
             np.hstack,
             (fragment_a, mo_coeff_vir_a),
             validate=False,
         ).split(np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False)
 
-        logger.info("p", p.alpha["+-"].shape)
-        logger.info("q", q.alpha["+-"].shape)
-
         nmo_a = mo_coeff_final.alpha["+-"].shape[1]
-        logger.debug("nmo_a = %s", nmo_a)
-        logger.info("nmo_a = %s", nmo_a)
-        logger.info("mo_coeff_final_alpha = %s", mo_coeff_final.alpha["+-"].shape)
-        if "+-" in mo_coeff_final.beta:
-            logger.info("mo_coeff_final_beta = %s", mo_coeff_final.beta["+-"].shape)
 
         if "+-" in mo_coeff_final.beta and nmo_a != mo_coeff_final.beta["+-"].shape[1]:
             raise NotImplementedError("TODO.")
@@ -613,11 +521,6 @@ class ProjectionTransformer(BaseTransformer):
                 {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_final, fock, mo_coeff_final, validate=False
             ),
         )
-        logger.info("alpha orbital energies")
-        logger.info(orbital_energy.alpha)
-        if "+-" in mo_coeff_final.beta:
-            logger.info("beta orbital energies")
-            logger.info(orbital_energy.beta)
 
         transform = BasisTransformer(ElectronicBasis.AO, ElectronicBasis.MO, mo_coeff_final)
 
@@ -651,7 +554,7 @@ class ProjectionTransformer(BaseTransformer):
         new_hamiltonian.electronic_integrals -= new_hamiltonian.fock(only_a)
         # and finally we add the diagonal matrix containing the orbital energies
         new_hamiltonian.electronic_integrals += orbital_energy
-        # TODO: to verify: this re-adds the contributions from h + J_tot - K_tot + \mu * P_B
+        # NOTE: this re-adds the contributions from h + J_tot - K_tot + \mu * P_B
         # this is a trick to avoid double counting
         # new_hamiltonian now equals h_{A in B} (see Eq. (3) in Manby2012)
 
@@ -724,18 +627,12 @@ def _fock_build_a(
     )
 
 
-def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock, zeta):
+def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock):
     logger.info("")
     logger.info("Doing concentric location and truncation of virtual space")
     logger.info("    Concentric localization and truncation for virtuals    ")
     logger.info("     D. Claudino and N. Mayhall, JCTC, 15, 6085 (2019)     ")
     logger.info("")
-
-    logger.info("num_bf", num_bf)
-
-    logger.info("mo_coeff_vir.alpha['+-'].shape", mo_coeff_vir.alpha["+-"].shape)
-    if "+-" in mo_coeff_vir.beta:
-        logger.info("mo_coeff_vir.beta['+-'].shape", mo_coeff_vir.beta["+-"].shape)
 
     # S^{-1} in paper
     overlap_a_pb_inv = ElectronicIntegrals.apply(np.linalg.inv, projection_basis, validate=False)
@@ -760,20 +657,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
 
     v_t = ElectronicIntegrals.from_raw_integrals(v_t_alpha, h1_b=v_t_beta, validate=False)
 
-    logger.info("v_t.alpha['+-'].shape", v_t.alpha["+-"].shape)
-    if "+-" in v_t.beta:
-        logger.info("v_t.beta['+-'].shape", v_t.beta["+-"].shape)
-
     # Eq. (10b)
     v_t_t = ElectronicIntegrals.apply(np.transpose, v_t, validate=False)
     v_span, v_kern = v_t_t.split(np.hsplit, [num_bf], validate=False)
-
-    logger.info("v_span.alpha['+-'].shape", v_span.alpha["+-"].shape)
-    if "+-" in v_t.beta:
-        logger.info("v_span.beta['+-'].shape", v_span.beta["+-"].shape)
-    logger.info("v_kern.alpha['+-'].shape", v_kern.alpha["+-"].shape)
-    if "+-" in v_t.beta:
-        logger.info("v_kern.beta['+-'].shape", v_kern.beta["+-"].shape)
 
     # Eq. (10c)
     mo_coeff_vir_new = ElectronicIntegrals.einsum(
@@ -785,39 +671,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir, v_kern, validate=False
     )
 
-    logger.info("mo_coeff_vir_new.alpha['+-'].shape", mo_coeff_vir_new.alpha["+-"].shape)
-    if "+-" in mo_coeff_vir_new.beta:
-        logger.info("mo_coeff_vir_new.beta['+-'].shape", mo_coeff_vir_new.beta["+-"].shape)
-    logger.info("mo_coeff_vir_kern.alpha['+-'].shape", mo_coeff_vir_kern.alpha["+-"].shape)
-    if "+-" in mo_coeff_vir_kern.beta:
-        logger.info("mo_coeff_vir_kern.beta['+-'].shape", mo_coeff_vir_kern.beta["+-"].shape)
-
-    # zeta controls the number of unoccupied orbitals
-    # for _ in range(zeta - 1):
-    #     einsummed = ElectronicIntegrals.einsum(
-    #         {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_new, fock, mo_coeff_vir_kern, validate=False
-    #     )
-    #     # Eq. (12a)
-    #     _, _, v_t = np.linalg.svd(
-    #         einsummed.alpha["+-"],
-    #         full_matrices=True,
-    #     )
-    #
-    #     # Eq. (12b)
-    #     # TODO: fix bug w.r.t. undefined mo_coeff_vir_cur
-    #     v_span, v_kern = np.hsplit(v_t.T, [mo_coeff_vir_cur.shape[1]])
-    #
-    #     # Eq. (12c-12d)
-    #     if mo_coeff_vir_kern.shape[1] > mo_coeff_vir_cur.shape[1]:
-    #         mo_coeff_vir_cur = np.dot(mo_coeff_vir_kern, v_span)
-    #         mo_coeff_vir_kern = np.dot(mo_coeff_vir_kern, v_kern)
-    #
-    #     else:
-    #         mo_coeff_vir_cur = np.dot(mo_coeff_vir_kern, v_t.T)
-    #         mo_coeff_vir_kern = np.zeros_like(mo_coeff_vir_kern)
-    #
-    #     # Eq. (12e)
-    #     mo_coeff_vir_new = np.hstack((mo_coeff_vir_new, mo_coeff_vir_cur))
+    # TODO: add an extension here to implement zeta (cf. JCTC 2019)
 
     # post-processing step
     logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
@@ -825,10 +679,6 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     einsummed = ElectronicIntegrals.einsum(
         {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_new, fock, mo_coeff_vir_new, validate=False
     )
-
-    logger.info("einsummed.alpha['+-'].shape", einsummed.alpha["+-"].shape)
-    if "+-" in einsummed.beta:
-        logger.info("einsummed.beta['+-'].shape", einsummed.beta["+-"].shape)
 
     # TODO: improve the following 7 lines
     _, eigvec_alpha = None, None
@@ -841,17 +691,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
 
     eigvec = ElectronicIntegrals.from_raw_integrals(eigvec_alpha, h1_b=eigvec_beta, validate=False)
 
-    logger.info("eigvec.alpha['+-'].shape", eigvec.alpha["+-"].shape)
-    if "+-" in eigvec.beta:
-        logger.info("eigvec.beta['+-'].shape", eigvec.beta["+-"].shape)
-
     mo_coeff_vir_new = ElectronicIntegrals.einsum(
         {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_new, eigvec, validate=False
     )
-
-    logger.info("mo_coeff_vir_new.alpha['+-'].shape", mo_coeff_vir_new.alpha["+-"].shape)
-    if "+-" in mo_coeff_vir_new.beta:
-        logger.info("mo_coeff_vir_new.beta['+-'].shape", mo_coeff_vir_new.beta["+-"].shape)
 
     mo_coeff_vir_kern_alpha = mo_coeff_vir_kern.alpha
     if "+-" in mo_coeff_vir_kern_alpha and mo_coeff_vir_kern_alpha["+-"].shape[1] != 0:
@@ -905,19 +747,11 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
 
     mo_coeff_vir = ElectronicIntegrals(mo_coeff_vir_alpha, mo_coeff_vir_beta)
 
-    logger.info("mo_coeff_vir.alpha['+-'].shape", mo_coeff_vir.alpha["+-"].shape)
-    if "+-" in mo_coeff_vir.beta:
-        logger.info("mo_coeff_vir.beta['+-'].shape", mo_coeff_vir.beta["+-"].shape)
-    logger.info("mo_coeff_vir_new.alpha['+-'].shape", mo_coeff_vir_new.alpha["+-"].shape)
-    if "+-" in mo_coeff_vir_new.beta:
-        logger.info("mo_coeff_vir_new.beta['+-'].shape", mo_coeff_vir_new.beta["+-"].shape)
-
     nvir_a_alpha = mo_coeff_vir_new.alpha["+-"].shape[1]
     nvir_b_alpha = mo_coeff_vir.alpha["+-"].shape[1] - nvir_a_alpha
 
-    # TODO: we probably need to ensure that the number of virtual orbitals are identical in the
-    # alpha and beta cases because none of Qiskit Nature is tested for differing numbers of orbitals
-    # per spin!
+    # WARNING: the number of alpha- and beta-spin orbitals is not guaranteed to be identical after
+    # this step!
     nvir_a_beta, nvir_b_beta = None, None
     if "+-" in mo_coeff_vir_new.beta:
         nvir_a_beta = mo_coeff_vir_new.beta["+-"].shape[1]

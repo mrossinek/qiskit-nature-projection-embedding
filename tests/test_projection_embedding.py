@@ -111,7 +111,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
     H         -2.87394       -0.89898        0.00001;
     H         -2.33417        0.56585        0.90131;
     H         -2.33417        0.56584       -0.90131""",
-            basis="631g*"
+            basis="sto3g"
         )
         driver.run_pyscf()
         qcschema = driver.to_qcschema()
@@ -566,7 +566,6 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 }
             )
             actual = problem.hamiltonian.electronic_integrals.one_body.alpha
-            print(actual)
             try:
                 self.assertTrue(
                     PolynomialTensor.apply(np.abs, actual).equiv(
