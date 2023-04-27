@@ -178,29 +178,6 @@ class ProjectionTransformer(BaseTransformer):
         e_thres = 1e-7
         max_iter = 50
 
-        fock_list = []
-        diis_error = []
-
-        # diis_e = ElectronicIntegrals.einsum(
-        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-        #     fock,
-        #     density_a,
-        #     overlap,
-        # ) - ElectronicIntegrals.einsum(
-        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-        #     overlap,
-        #     density_a,
-        #     fock,
-        # )
-        # diis_e = ElectronicIntegrals.einsum(
-        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-        #     A,
-        #     diis_e,
-        #     A
-        # )
-        # fock_list.append(fock)
-        # diis_error.append(diis_e)
-
         logger.info("")
         logger.info(" Hartree-Fock for subsystem A Energy")
 
@@ -257,90 +234,12 @@ class ProjectionTransformer(BaseTransformer):
                 + e_nuc
             )
 
-            diis_e = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-                fock,
-                density_a,
-                overlap,
-            ) - ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-                overlap,
-                density_a,
-                fock,
-            )
-            diis_e = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")}, projector, diis_e, projector
-            )
-
-            fock_list.append(fock)
-            diis_error.append(diis_e)
-            dRMS_a = np.mean(diis_e.one_body.alpha["+-"] ** 2) ** 0.5
-            dRMS_b = np.mean(diis_e.one_body.beta["+-"] ** 2) ** 0.5
-            logger.debug(dRMS_a, dRMS_b)
-
             logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
 
             # SCF Converged?
-            if abs(e_new_a - e_old) < e_thres and (dRMS_a < 1e-3 and dRMS_b < 1e-3):
+            if abs(e_new_a - e_old) < e_thres:
                 break
             e_old = e_new_a
-
-            if scf_iter >= 2:
-                # DIIS
-
-                diis_count = len(fock_list)
-                if diis_count > 6:
-                    del fock_list[0]
-                    del diis_error[0]
-                    diis_count -= 1
-
-                B_a = np.empty((diis_count + 1, diis_count + 1))
-                B_a[-1, :] = -1
-                B_a[:, -1] = -1
-                B_a[-1, -1] = 0
-                for num1, e1 in enumerate(diis_error):
-                    for num2, e2 in enumerate(diis_error):
-                        if num2 > num1:
-                            continue
-                        val = np.einsum("ij,ij->", e1.alpha["+-"], e2.alpha["+-"])
-                        B_a[num1, num2] = val
-                        B_a[num2, num1] = val
-
-                B_a[:-1, :-1] /= np.abs(B_a[:-1, :-1]).max()
-
-                resid_a = np.zeros(diis_count + 1)
-                resid_a[-1] = -1
-
-                ci_a = np.linalg.solve(B_a, resid_a)
-
-                fock_a = np.zeros_like(fock.alpha["+-"])
-                for num, c in enumerate(ci_a[:-1]):
-                    fock_a += c * fock_list[num].alpha["+-"]
-
-                B_b = np.empty((diis_count + 1, diis_count + 1))
-                B_b[-1, :] = -1
-                B_b[:, -1] = -1
-                B_b[-1, -1] = 0
-                for num1, e1 in enumerate(diis_error):
-                    for num2, e2 in enumerate(diis_error):
-                        if num2 > num1:
-                            continue
-                        val = np.einsum("ij,ij->", e1.beta["+-"], e2.beta["+-"])
-                        B_b[num1, num2] = val
-                        B_b[num2, num1] = val
-
-                B_b[:-1, :-1] /= np.abs(B_b[:-1, :-1]).max()
-
-                resid_b = np.zeros(diis_count + 1)
-                resid_b[-1] = -1
-
-                ci_b = np.linalg.solve(B_b, resid_b)
-
-                fock_b = np.zeros_like(fock.beta["+-"])
-                for num, c in enumerate(ci_b[:-1]):
-                    fock_b += c * fock_list[num].beta["+-"]
-
-                fock = ElectronicIntegrals.from_raw_integrals(fock_a, h1_b=fock_b)
 
             if scf_iter == max_iter:
                 raise Exception("Maximum number of SCF iterations exceeded.")
@@ -459,10 +358,10 @@ class ProjectionTransformer(BaseTransformer):
             fock,
         )
 
-        # NOTE: we need to correct the number of virtual alpha-spin orbitals in fragment A to take a
+        # NOTE: we need to correct the number of virtual beta-spin orbitals in fragment A to take a
         # potential number of unpaired electrons into account
         nocc_a_delta = nocc_a_alpha - nocc_a_beta
-        nvir_a_alpha -= nocc_a_delta
+        nvir_a_beta += nocc_a_delta
 
         mo_coeff_vir_a_alpha, mo_coeff_vir_b_alpha = mo_coeff_vir_pb.alpha.split(
             np.hsplit, [nvir_a_alpha], validate=False
