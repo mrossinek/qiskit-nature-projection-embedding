@@ -527,6 +527,11 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("nvir_a_beta = %s", nvir_a_beta)
         logger.info("nvir_b_beta = %s", nvir_b_beta)
 
+        # TODO: is this really the "hack" that we want/need to do in order to ensure that the
+        # number of alpha- and beta-spin MOs in the A fragment match?
+        nocc_a_delta = nocc_a_alpha - nocc_a_beta
+        nvir_a_alpha -= nocc_a_delta
+
         mo_coeff_vir_a_alpha, mo_coeff_vir_b_alpha = mo_coeff_vir_pb.alpha.split(
             np.hsplit, [nvir_a_alpha], validate=False
         )
@@ -535,11 +540,6 @@ class ProjectionTransformer(BaseTransformer):
         if "+-" in mo_coeff_vir_pb.beta:
             nocc_a_alpha = fragment_a.alpha["+-"].shape[1]
             nocc_a_beta = fragment_a.beta["+-"].shape[1]
-
-            # TODO: is this really the "hack" that we want/need to do in order to ensure that the
-            # number of alpha- and beta-spin MOs in the A fragment match?
-            nocc_a_delta = nocc_a_alpha - nocc_a_beta
-            nvir_a_beta += nocc_a_delta
 
             mo_coeff_vir_a_beta, mo_coeff_vir_b_beta = mo_coeff_vir_pb.beta.split(
                 np.hsplit, [nvir_a_beta], validate=False
@@ -567,6 +567,7 @@ class ProjectionTransformer(BaseTransformer):
         fock += mu * proj_excluded_virts
 
         max_orb = -self.num_frozen_virtual_orbitals if self.num_frozen_virtual_orbitals else None
+        logger.info("max_orb", max_orb)
 
         logger.info("self.num_frozen_occupied_orbitals", self.num_frozen_occupied_orbitals)
         logger.info("self.num_frozen_virtual_orbitals", self.num_frozen_virtual_orbitals)
@@ -576,11 +577,14 @@ class ProjectionTransformer(BaseTransformer):
             logger.info("fragment_a.beta['+-'].shape", fragment_a.beta["+-"].shape)
             logger.info("mo_coeff_vir_a.beta['+-'].shape", mo_coeff_vir_a.beta["+-"].shape)
 
-        _, mo_coeff_final, _ = ElectronicIntegrals.stack(
+        q, mo_coeff_final, p = ElectronicIntegrals.stack(
             np.hstack,
             (fragment_a, mo_coeff_vir_a),
             validate=False,
         ).split(np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False)
+
+        logger.info("p", p.alpha["+-"].shape)
+        logger.info("q", q.alpha["+-"].shape)
 
         nmo_a = mo_coeff_final.alpha["+-"].shape[1]
         logger.debug("nmo_a = %s", nmo_a)

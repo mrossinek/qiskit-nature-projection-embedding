@@ -628,7 +628,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer((8, 6), 10, 5, 8, basis_trafo)
+        trafo = ProjectionTransformer((8, 6), 28, 5, 25, basis_trafo)
         problem = trafo.transform(problem)
 
         algo = GroundStateEigensolver(JordanWignerMapper(), NumPyMinimumEigensolverFactory())
