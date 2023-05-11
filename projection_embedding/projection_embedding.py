@@ -421,6 +421,7 @@ class ProjectionTransformer(BaseTransformer):
             ),
         )
 
+        self.mo_coeff_final = mo_coeff_final
         transform = BasisTransformer(ElectronicBasis.AO, ElectronicBasis.MO, mo_coeff_final)
 
         new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
