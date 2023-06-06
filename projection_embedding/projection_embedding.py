@@ -148,7 +148,7 @@ class ProjectionTransformer(BaseTransformer):
             density_b.beta = density_b.alpha
 
         fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
-        logger.debug("e_low_level", e_low_level)
+        logger.debug("e_low_level %s", e_low_level)
 
         e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
@@ -163,7 +163,7 @@ class ProjectionTransformer(BaseTransformer):
             + e_low_level
             + hamiltonian.nuclear_repulsion_energy
         )
-        logger.debug("e_new_a", e_new_a)
+        logger.debug("e_new_a %s", e_new_a)
 
         identity = ElectronicIntegrals.from_raw_integrals(
             np.identity(nao), h1_b=None if density_b.beta.is_empty() else np.identity(nao)
@@ -180,26 +180,6 @@ class ProjectionTransformer(BaseTransformer):
 
         fock_list = []
         diis_error = []
-
-        # diis_e = ElectronicIntegrals.einsum(
-        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-        #     fock,
-        #     density_a,
-        #     overlap,
-        # ) - ElectronicIntegrals.einsum(
-        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-        #     overlap,
-        #     density_a,
-        #     fock,
-        # )
-        # diis_e = ElectronicIntegrals.einsum(
-        #     {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-        #     A,
-        #     diis_e,
-        #     A
-        # )
-        # fock_list.append(fock)
-        # diis_error.append(diis_e)
 
         logger.info("")
         logger.info(" Hartree-Fock for subsystem A Energy")
@@ -234,7 +214,7 @@ class ProjectionTransformer(BaseTransformer):
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
 
             fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
-            logger.debug("e_low_level", e_low_level)
+            logger.debug("e_low_level %s", e_low_level)
 
             projector = identity - ElectronicIntegrals.einsum(
                 {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
@@ -276,7 +256,8 @@ class ProjectionTransformer(BaseTransformer):
             diis_error.append(diis_e)
             dRMS_a = np.mean(diis_e.one_body.alpha["+-"] ** 2) ** 0.5
             dRMS_b = np.mean(diis_e.one_body.beta["+-"] ** 2) ** 0.5
-            logger.debug(dRMS_a, dRMS_b)
+            logger.debug("dRMS_a %s", dRMS_a)
+            logger.debug("dRMS_b %s", dRMS_b)
 
             logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
 
@@ -313,9 +294,9 @@ class ProjectionTransformer(BaseTransformer):
 
                 ci_a = np.linalg.solve(B_a, resid_a)
 
-                fock_a = np.zeros_like(fock.alpha["+-"])
+                fock_a = np.zeros_like(np.asarray(fock.alpha["+-"]))
                 for num, c in enumerate(ci_a[:-1]):
-                    fock_a += c * fock_list[num].alpha["+-"]
+                    fock_a += c * np.asarray(fock_list[num].alpha["+-"])
 
                 B_b = np.empty((diis_count + 1, diis_count + 1))
                 B_b[-1, :] = -1
@@ -336,9 +317,9 @@ class ProjectionTransformer(BaseTransformer):
 
                 ci_b = np.linalg.solve(B_b, resid_b)
 
-                fock_b = np.zeros_like(fock.beta["+-"])
+                fock_b = np.zeros_like(np.asarray(fock.beta["+-"]))
                 for num, c in enumerate(ci_b[:-1]):
-                    fock_b += c * fock_list[num].beta["+-"]
+                    fock_b += c * np.asarray(fock_list[num].beta["+-"])
 
                 fock = ElectronicIntegrals.from_raw_integrals(fock_a, h1_b=fock_b)
 
@@ -444,6 +425,11 @@ class ProjectionTransformer(BaseTransformer):
                 {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_ints, eigvec_fock, validate=False
             )
 
+        logger.info("nocc_a_alpha %s", nocc_a_alpha)
+        logger.info("nocc_a_beta %s", nocc_a_beta)
+        logger.info("nocc_b_alpha %s", nocc_b_alpha)
+        logger.info("nocc_b_beta %s", nocc_b_beta)
+
         # doing concentric local virtuals
         (
             mo_coeff_vir_pb,
@@ -459,10 +445,18 @@ class ProjectionTransformer(BaseTransformer):
             fock,
         )
 
+        logger.info("nvir_a_alpha %s", nvir_a_alpha)
+        logger.info("nvir_a_beta %s", nvir_a_beta)
+        logger.info("nvir_b_alpha %s", nvir_b_alpha)
+        logger.info("nvir_b_beta %s", nvir_b_beta)
+
         # NOTE: we need to correct the number of virtual alpha-spin orbitals in fragment A to take a
         # potential number of unpaired electrons into account
         nocc_a_delta = nocc_a_alpha - nocc_a_beta
         nvir_a_alpha -= nocc_a_delta
+
+        logger.info("nocc_a_delta %s", nocc_a_delta)
+        logger.info("new nvir_a_alpha %s", nvir_a_alpha)
 
         mo_coeff_vir_a_alpha, mo_coeff_vir_b_alpha = mo_coeff_vir_pb.alpha.split(
             np.hsplit, [nvir_a_alpha], validate=False
@@ -480,6 +474,11 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff_vir_a = ElectronicIntegrals(mo_coeff_vir_a_alpha, mo_coeff_vir_a_beta)
         mo_coeff_vir_b = ElectronicIntegrals(mo_coeff_vir_b_alpha, mo_coeff_vir_b_beta)
 
+        logger.info("mo_coeff_vir_a.alpha.shape %s", mo_coeff_vir_a.alpha["+-"].shape)
+        logger.info("mo_coeff_vir_a.beta.shape %s", mo_coeff_vir_a.beta["+-"].shape)
+        logger.info("mo_coeff_vir_b.alpha.shape %s", mo_coeff_vir_b.alpha["+-"].shape)
+        logger.info("mo_coeff_vir_b.beta.shape %s", mo_coeff_vir_b.beta["+-"].shape)
+
         # P^B in Manby2012
         proj_excluded_virts = ElectronicIntegrals.einsum(
             {"ij,jk,lk,lm->im": ("+-",) * 5},
@@ -493,19 +492,31 @@ class ProjectionTransformer(BaseTransformer):
 
         max_orb = -self.num_frozen_virtual_orbitals if self.num_frozen_virtual_orbitals else None
 
+        logger.info("fragment_a.alpha.shape %s", fragment_a.alpha["+-"].shape)
+        logger.info("fragment_a.beta.shape %s", fragment_a.beta["+-"].shape)
+
         _, mo_coeff_final, _ = ElectronicIntegrals.stack(
             np.hstack,
             (fragment_a, mo_coeff_vir_a),
             validate=False,
         ).split(np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False)
 
+        logger.info("mo_coeff_final.alpha.shape %s", mo_coeff_final.alpha["+-"].shape)
+        logger.info("mo_coeff_final.beta.shape %s", mo_coeff_final.beta["+-"].shape)
+
         nmo_a = mo_coeff_final.alpha["+-"].shape[1]
+
+        logger.info("nmo_a %s", nmo_a)
+        logger.info("nmo_b %s", mo_coeff_final.beta["+-"].shape[1])
 
         if "+-" in mo_coeff_final.beta and nmo_a != mo_coeff_final.beta["+-"].shape[1]:
             raise NotImplementedError("TODO.")
 
         nocc_a_alpha -= self.num_frozen_occupied_orbitals
         nocc_a_beta -= self.num_frozen_occupied_orbitals
+
+        logger.info("new nocc_a_alpha %s", nocc_a_alpha)
+        logger.info("new nocc_a_beta %s", nocc_a_beta)
 
         # NOTE: at this point fock =  (omitting pre-factors for Coulomb to be RKS/UKS-agnostic)
         #   h_core + J_A - K_A
