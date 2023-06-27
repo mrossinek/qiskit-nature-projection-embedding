@@ -453,7 +453,10 @@ class ProjectionTransformer(BaseTransformer):
         # NOTE: we need to correct the number of virtual alpha-spin orbitals in fragment A to take a
         # potential number of unpaired electrons into account
         nocc_a_delta = nocc_a_alpha - nocc_a_beta
-        nvir_a_alpha -= nocc_a_delta
+        if nvir_a_alpha >= nocc_a_delta:
+            nvir_a_alpha -= nocc_a_delta
+        else:
+            nvir_a_beta += nocc_a_delta
 
         logger.info("nocc_a_delta %s", nocc_a_delta)
         logger.info("new nvir_a_alpha %s", nvir_a_alpha)
