@@ -608,6 +608,9 @@ class ProjectionTransformer(BaseTransformer):
             nocc_a_beta,
         )
         result.num_spatial_orbitals = nmo_a
+        result.orbital_energy = np.diag(orbital_energy.alpha["+-"])
+        if not orbital_energy.beta.is_empty():
+            result.orbital_energy_b = np.diag(orbital_energy.beta["+-"])
 
         for prop in problem.properties:
             if isinstance(prop, (AngularMomentum, Magnetization, ParticleNumber)):

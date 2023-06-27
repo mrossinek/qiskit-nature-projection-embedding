@@ -311,6 +311,120 @@ class TestProjectionTransformer(QiskitNatureTestCase):
             self.assertEqual(problem.num_alpha, 2)
             self.assertEqual(problem.num_beta, 2)
 
+    @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
+    def test_larger_system_dft_pm(self):
+        """Tests a full run on a larger system."""
+        driver = PySCFDriver(
+            atom="""N          2.54840       -0.23120       -0.00000;
+                C          1.79831        0.04694       -0.00000;
+                C          0.37007        0.56616       -0.00000;
+                H          0.22595        1.20906       -0.90096;
+                H          0.22596        1.20907        0.90095;
+                C         -0.68181       -0.60624        0.00001;
+                H         -0.51758       -1.24375       -0.89892;
+                H         -0.51758       -1.24374        0.89895;
+                C         -2.14801       -0.05755        0.00001;
+                H         -2.87394       -0.89898        0.00001;
+                H         -2.33417        0.56585        0.90131;
+                H         -2.33417        0.56584       -0.90131""",
+            basis="sto3g",
+            xc_functional="pbe",
+            method=MethodType.RKS,
+        )
+        driver.run_pyscf()
+        qcschema = driver.to_qcschema()
+        problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
+        print(problem.reference_energy)
+        basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
+        trafo = ProjectionTransformer(14, 10, basis_trafo, 4, 4)
+
+        def _pipek_mezey(trafo, overlap, mo_coeff_occ, num_bf, nocc_a):
+            from pyscf.lo import PipekMezey
+
+            nocc_a = nocc_a[0]
+            nocc_b = (driver._mol.nelectron - 2 * nocc_a) // 2
+
+            pm = PipekMezey(driver._mol)
+            mo = pm.kernel(mo_coeff_occ.alpha["+-"], verbose=4)
+
+            nocc = mo.shape[1]
+            pop = np.zeros((nocc, 2))
+            for i in range(nocc):
+                col = mo[:, i]
+                dens = np.outer(col, col)
+                PS = np.dot(dens, overlap)
+
+                pop[i,0] = np.trace(PS[:num_bf, :num_bf])
+                pop[i,1] = np.trace(PS[num_bf:, num_bf:])
+
+            print(nocc, nocc_a, nocc_b, num_bf)
+
+            pop_order_1 = np.argsort(-1 * pop[:,0])
+            pop_order_2 = np.argsort(-1 * pop[:,1])
+
+            orbid_1 = pop_order_1[:nocc_a]
+            orbid_2 = pop_order_2[:nocc_b]
+
+            print("orbitals assigned to fragment 1:", orbid_1)
+            print("orbitals assigned to fragment 2:", orbid_2)
+
+            nao = driver._mol.nao
+            fragment_1 = np.zeros((nao, nocc_a))
+            fragment_2 = np.zeros((nao, nocc_b))
+
+            for i in range(nocc_a):
+                fragment_1[:,i] = mo[:,orbid_1[i]]
+            for i in range(nocc_b):
+                fragment_2[:,i] = mo[:,orbid_2[i]]
+
+            return (
+                ElectronicIntegrals.from_raw_integrals(fragment_1, validate=False),
+                ElectronicIntegrals.from_raw_integrals(fragment_2, validate=False),
+            )
+
+        def _fock_build_a(trafo, density_a, density_b):
+            density_tot = density_a + density_b
+
+            h_core = trafo.hamiltonian.electronic_integrals.one_body
+
+            pyscf_rho_a = np.asarray(density_a.trace_spin()["+-"])
+            pyscf_rho_tot = np.asarray(density_tot.trace_spin()["+-"])
+
+            pyscf_fock_a = driver._calc.get_fock(dm=pyscf_rho_a)
+            pyscf_fock_tot = driver._calc.get_fock(dm=pyscf_rho_tot)
+
+            e_low_level_a = driver._calc.energy_tot(dm=pyscf_rho_a)
+            e_low_level_tot = driver._calc.energy_tot(dm=pyscf_rho_tot)
+
+            fock_final = trafo.hamiltonian.fock(density_a)
+            h_core_a = h_core.alpha["+-"]
+            fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)
+            fock_final = ElectronicIntegrals.from_raw_integrals(fock_final.alpha["+-"] + fock_delta)
+
+            e_tot = e_low_level_tot - e_low_level_a
+
+            return fock_final, e_tot
+
+        trafo._spade_partition = partial(_pipek_mezey, trafo)
+        trafo._fock_build_a = partial(_fock_build_a, trafo)
+
+        problem = trafo.transform(problem)
+
+        with self.subTest("energy shifts"):
+            self.assertEqual(
+                problem.hamiltonian.constants.keys(),
+                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+            )
+            self.assertAlmostEqual(
+                problem.hamiltonian.constants["ProjectionTransformer"], 5.797826
+            )
+            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -207.22327435)
+
+        with self.subTest("more problem attributes"):
+            self.assertEqual(problem.num_spatial_orbitals, 4)
+            self.assertEqual(problem.num_alpha, 2)
+            self.assertEqual(problem.num_beta, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
