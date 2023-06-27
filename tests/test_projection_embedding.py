@@ -44,7 +44,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(2, 1, 0, 0, basis_trafo)
+        trafo = ProjectionTransformer(2, 1, basis_trafo)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -81,7 +81,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(2, 1, 0, 0, basis_trafo)
+        trafo = ProjectionTransformer(2, 1, basis_trafo)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -107,7 +107,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(4, 5, 0, 1, basis_trafo)
+        trafo = ProjectionTransformer(4, 5, basis_trafo, 4, 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -137,7 +137,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer((4, 2), 5, 0, 0, basis_trafo)
+        trafo = ProjectionTransformer((4, 2), 5, basis_trafo)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -177,7 +177,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(14, 10, 5, 8, basis_trafo)
+        trafo = ProjectionTransformer(14, 10, basis_trafo, 4, 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -220,7 +220,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer((8, 6), 28, 5, 27, basis_trafo)
+        trafo = ProjectionTransformer((8, 6), 28, basis_trafo, (3, 1), 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):

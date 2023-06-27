@@ -43,15 +43,23 @@ class ProjectionTransformer(BaseTransformer):
         self,
         num_electrons: int | tuple[int, int],  # the number of electrons in the "active" subsystem A
         num_basis_functions: int,  # the number of basis functions in the "active" subsystem A
-        num_frozen_occupied_orbitals: int,  # the number of occupied orbitals to freeze
-        num_frozen_virtual_orbitals: int,  # the number of virtual orbitals to freeze
         basis_transformer: BasisTransformer,
+        num_active_electrons: int | tuple[int, int] | None = None,
+        num_active_orbitals: int | None = None,
     ) -> None:
         """TODO."""
         self.num_electrons = num_electrons
         self.num_basis_functions = num_basis_functions
-        self.num_frozen_occupied_orbitals = num_frozen_occupied_orbitals
-        self.num_frozen_virtual_orbitals = num_frozen_virtual_orbitals
+        # TODO: clean up handling of of new active space definition
+        self.num_active_electrons = num_active_electrons
+        if num_active_electrons is not None:
+            if isinstance(num_electrons, tuple):
+                self.num_frozen_occupied_orbitals = num_electrons[0] - num_active_electrons[0]
+            else:
+                self.num_frozen_occupied_orbitals = (num_electrons - num_active_electrons) // 2
+        else:
+            self.num_frozen_occupied_orbitals = None
+        self.num_active_orbitals = num_active_orbitals
         self.basis_transformer = basis_transformer
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
@@ -493,16 +501,18 @@ class ProjectionTransformer(BaseTransformer):
         )
         fock += mu * proj_excluded_virts
 
-        max_orb = -self.num_frozen_virtual_orbitals if self.num_frozen_virtual_orbitals else None
-
         logger.info("fragment_a.alpha.shape %s", fragment_a.alpha["+-"].shape)
         logger.info("fragment_a.beta.shape %s", fragment_a.beta["+-"].shape)
 
-        _, mo_coeff_final, _ = ElectronicIntegrals.stack(
+        mo_coeff_final = ElectronicIntegrals.stack(
             np.hstack,
             (fragment_a, mo_coeff_vir_a),
             validate=False,
-        ).split(np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False)
+        )
+
+        if self.num_frozen_occupied_orbitals is not None and self.num_active_orbitals is not None:
+            max_orb = self.num_frozen_occupied_orbitals + self.num_active_orbitals
+            _, mo_coeff_final, _ = mo_coeff_final.split(np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False)
 
         logger.info("mo_coeff_final.alpha.shape %s", mo_coeff_final.alpha["+-"].shape)
         logger.info("mo_coeff_final.beta.shape %s", mo_coeff_final.beta["+-"].shape)
@@ -515,8 +525,9 @@ class ProjectionTransformer(BaseTransformer):
         if "+-" in mo_coeff_final.beta and nmo_a != mo_coeff_final.beta["+-"].shape[1]:
             raise NotImplementedError("TODO.")
 
-        nocc_a_alpha -= self.num_frozen_occupied_orbitals
-        nocc_a_beta -= self.num_frozen_occupied_orbitals
+        if self.num_frozen_occupied_orbitals is not None:
+            nocc_a_alpha -= self.num_frozen_occupied_orbitals
+            nocc_a_beta -= self.num_frozen_occupied_orbitals
 
         logger.info("new nocc_a_alpha %s", nocc_a_alpha)
         logger.info("new nocc_a_beta %s", nocc_a_beta)
