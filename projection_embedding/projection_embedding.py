@@ -138,7 +138,7 @@ class ProjectionTransformer(BaseTransformer):
         overlap[np.abs(overlap) < 1e-12] = 0.0
 
         # TODO: make localization method configurable
-        fragment_a, fragment_b = _spade_partition(
+        fragment_a, fragment_b = self._spade_partition(
             overlap, mo_coeff_occ_ints, self.num_basis_functions, (nocc_a_alpha, nocc_a_beta)
         )
 
@@ -647,6 +647,51 @@ class ProjectionTransformer(BaseTransformer):
             + e_low_level.beta_alpha.get("", 0.0)
         )
 
+    def _spade_partition(
+        self, overlap: np.ndarray, mo_coeff_occ: ElectronicIntegrals, num_bf: int, nocc_a: tuple[int, int]
+    ):
+        logger.info("")
+        logger.info("Doing SPADE partitioning")
+        logger.info("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
+        logger.info("")
+
+        # 1. use symmetric orthogonalization on the overlap matrix
+        symm_orth = ElectronicIntegrals.from_raw_integrals(symmetric_orthogonalization(overlap))
+
+        # 2. change the MO basis to be orthogonal and reasonably localized
+        mo_coeff_tmp = ElectronicIntegrals.einsum(
+            {"ij,jk->ik": ("+-",) * 3}, symm_orth, mo_coeff_occ, validate=False
+        )
+
+        # 3. select the active sector
+        mo_coeff_tmp, _ = mo_coeff_tmp.split(np.vsplit, [num_bf], validate=False)
+
+        # 4. use SVD to find the final rotation matrix
+        # TODO: improve the following 7 lines
+        rot_alpha: np.ndarray = None
+        if "+-" in mo_coeff_tmp.alpha:
+            _, _, rot_alpha = np.linalg.svd(mo_coeff_tmp.alpha["+-"], full_matrices=True)
+            rot_alpha = rot_alpha.T
+
+        rot_beta: np.ndarray = None
+        if "+-" in mo_coeff_tmp.beta:
+            _, _, rot_beta = np.linalg.svd(mo_coeff_tmp.beta["+-"], full_matrices=True)
+            rot_beta = rot_beta.T
+
+        rot_t = ElectronicIntegrals.from_raw_integrals(rot_alpha, h1_b=rot_beta, validate=False)
+        nocc_a_alpha, nocc_a_beta = nocc_a
+        left_a, right_a = rot_t.alpha.split(np.hsplit, [nocc_a_alpha], validate=False)
+        left_b, right_b = None, None
+        if not rot_t.beta.is_empty():
+            left_b, right_b = rot_t.beta.split(np.hsplit, [nocc_a_beta], validate=False)
+        left = ElectronicIntegrals(left_a, left_b, validate=False)
+        right = ElectronicIntegrals(right_a, right_b, validate=False)
+
+        return (
+            ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, left, validate=False),
+            ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, right, validate=False),
+        )
+
 
 def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock):
     logger.info("")
@@ -827,49 +872,3 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         nvir_b_beta = mo_coeff_vir.beta["+-"].shape[1] - nvir_a_beta
 
     return mo_coeff_vir, (nvir_a_alpha, nvir_a_beta), (nvir_b_alpha, nvir_b_beta)
-
-
-def _spade_partition(
-    overlap: np.ndarray, mo_coeff_occ: ElectronicIntegrals, num_bf: int, nocc_a: tuple[int, int]
-):
-    logger.info("")
-    logger.info("Doing SPADE partitioning")
-    logger.info("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
-    logger.info("")
-
-    # 1. use symmetric orthogonalization on the overlap matrix
-    symm_orth = ElectronicIntegrals.from_raw_integrals(symmetric_orthogonalization(overlap))
-
-    # 2. change the MO basis to be orthogonal and reasonably localized
-    mo_coeff_tmp = ElectronicIntegrals.einsum(
-        {"ij,jk->ik": ("+-",) * 3}, symm_orth, mo_coeff_occ, validate=False
-    )
-
-    # 3. select the active sector
-    mo_coeff_tmp, _ = mo_coeff_tmp.split(np.vsplit, [num_bf], validate=False)
-
-    # 4. use SVD to find the final rotation matrix
-    # TODO: improve the following 7 lines
-    rot_alpha: np.ndarray = None
-    if "+-" in mo_coeff_tmp.alpha:
-        _, _, rot_alpha = np.linalg.svd(mo_coeff_tmp.alpha["+-"], full_matrices=True)
-        rot_alpha = rot_alpha.T
-
-    rot_beta: np.ndarray = None
-    if "+-" in mo_coeff_tmp.beta:
-        _, _, rot_beta = np.linalg.svd(mo_coeff_tmp.beta["+-"], full_matrices=True)
-        rot_beta = rot_beta.T
-
-    rot_t = ElectronicIntegrals.from_raw_integrals(rot_alpha, h1_b=rot_beta, validate=False)
-    nocc_a_alpha, nocc_a_beta = nocc_a
-    left_a, right_a = rot_t.alpha.split(np.hsplit, [nocc_a_alpha], validate=False)
-    left_b, right_b = None, None
-    if not rot_t.beta.is_empty():
-        left_b, right_b = rot_t.beta.split(np.hsplit, [nocc_a_beta], validate=False)
-    left = ElectronicIntegrals(left_a, left_b, validate=False)
-    right = ElectronicIntegrals(right_a, right_b, validate=False)
-
-    return (
-        ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, left, validate=False),
-        ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, right, validate=False),
-    )
