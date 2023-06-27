@@ -95,14 +95,14 @@ class ProjectionTransformer(BaseTransformer):
 
         # TODO: assert AO basis
 
-        hamiltonian = problem.hamiltonian
+        self.hamiltonian = problem.hamiltonian
         # TODO: hamiltonian.fock does not work as expected for unrestricted spin systems because the
         # hamiltonian is in the AO basis and, thus, has no beta or beta_alpha 2-body terms
         # associated with it yet...
         if not self.basis_transformer.coefficients.beta.is_empty():
-            hamiltonian.electronic_integrals.beta = hamiltonian.electronic_integrals.alpha
-            hamiltonian.electronic_integrals.beta_alpha = (
-                hamiltonian.electronic_integrals.two_body.alpha
+            self.hamiltonian.electronic_integrals.beta = self.hamiltonian.electronic_integrals.alpha
+            self.hamiltonian.electronic_integrals.beta_alpha = (
+                self.hamiltonian.electronic_integrals.two_body.alpha
             )
 
         if isinstance(self.num_electrons, tuple):
@@ -155,12 +155,12 @@ class ProjectionTransformer(BaseTransformer):
         if density_b.beta.is_empty():
             density_b.beta = density_b.alpha
 
-        fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+        fock, e_low_level = self._fock_build_a(density_a, density_b)
         logger.debug("e_low_level %s", e_low_level)
 
         e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            hamiltonian.electronic_integrals.one_body + hamiltonian.fock(density_a),
+            self.hamiltonian.electronic_integrals.one_body + self.hamiltonian.fock(density_a),
             density_a,
         )
 
@@ -169,7 +169,7 @@ class ProjectionTransformer(BaseTransformer):
             + e_new_a_ints.beta.get("", 0.0)
             + e_new_a_ints.beta_alpha.get("", 0.0)
             + e_low_level
-            + hamiltonian.nuclear_repulsion_energy
+            + self.hamiltonian.nuclear_repulsion_energy
         )
         logger.debug("e_new_a %s", e_new_a)
 
@@ -192,7 +192,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("")
         logger.info(" Hartree-Fock for subsystem A Energy")
 
-        e_nuc = hamiltonian.nuclear_repulsion_energy
+        e_nuc = self.hamiltonian.nuclear_repulsion_energy
 
         # TODO: actually make this SCF loop a standalone method
         for scf_iter in range(1, max_iter + 1):
@@ -221,7 +221,7 @@ class ProjectionTransformer(BaseTransformer):
 
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
 
-            fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+            fock, e_low_level = self._fock_build_a(density_a, density_b)
             logger.debug("e_low_level %s", e_low_level)
 
             projector = identity - ElectronicIntegrals.einsum(
@@ -233,7 +233,7 @@ class ProjectionTransformer(BaseTransformer):
 
             e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
-                hamiltonian.electronic_integrals.one_body + hamiltonian.fock(density_a),
+                self.hamiltonian.electronic_integrals.one_body + self.hamiltonian.fock(density_a),
                 density_a,
             )
 
@@ -341,7 +341,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         # post convergence wrapup
-        fock, e_low_level = _fock_build_a(density_a, density_b, hamiltonian)
+        fock, e_low_level = self._fock_build_a(density_a, density_b)
 
         mu = 1.0e8
         fock -= mu * ElectronicIntegrals.einsum(
@@ -550,7 +550,7 @@ class ProjectionTransformer(BaseTransformer):
         self.mo_coeff_final = mo_coeff_final
         transform = BasisTransformer(ElectronicBasis.AO, ElectronicBasis.MO, mo_coeff_final)
 
-        new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(hamiltonian))
+        new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(self.hamiltonian))
         # now, new_hamiltonian is simply the hamiltonian we started with but transformed into the
         # projected MO basis (which is limited to subsystem A)
 
@@ -618,39 +618,39 @@ class ProjectionTransformer(BaseTransformer):
         return result
 
 
-def _fock_build_a(
-    density_a: ElectronicDensity, density_b: ElectronicDensity, hamiltonian: ElectronicEnergy
-):
-    density_tot = density_a + density_b
+    def _fock_build_a(
+        self, density_a: ElectronicDensity, density_b: ElectronicDensity
+    ):
+        density_tot = density_a + density_b
 
-    # NOTE: in the DFT case, these need to include the XC components
-    fock_a = hamiltonian.fock(density_a)
-    fock_tot = hamiltonian.fock(density_tot)
+        # NOTE: in the DFT case, these need to include the XC components
+        fock_a = self.hamiltonian.fock(density_a)
+        fock_tot = self.hamiltonian.fock(density_tot)
 
-    h_core = hamiltonian.electronic_integrals.one_body
+        h_core = self.hamiltonian.electronic_integrals.one_body
 
-    e_low_level = 0.5 * ElectronicIntegrals.einsum(
-        {"ij,ij": ("+-", "+-", "")},
-        fock_tot + h_core,
-        density_tot,
-    )
-    e_low_level -= 0.5 * ElectronicIntegrals.einsum(
-        {"ij,ij": ("+-", "+-", "")},
-        fock_a + h_core,
-        density_a,
-    )
-    # TODO: in the DFT case we need to additionally deal with the XC components
-    # we can handle this via an optional callback
+        e_low_level = 0.5 * ElectronicIntegrals.einsum(
+            {"ij,ij": ("+-", "+-", "")},
+            fock_tot + h_core,
+            density_tot,
+        )
+        e_low_level -= 0.5 * ElectronicIntegrals.einsum(
+            {"ij,ij": ("+-", "+-", "")},
+            fock_a + h_core,
+            density_a,
+        )
+        # TODO: in the DFT case we need to additionally deal with the XC components
+        # we can handle this via an optional callback
 
-    # NOTE: the following is written as it is because this reflects better how DFT will differ
-    fock_final = hamiltonian.fock(density_a)  # NOTE: this should NOT contain any XC components
-    fock_final += (fock_tot - h_core) - (fock_a - h_core)
+        # NOTE: the following is written as it is because this reflects better how DFT will differ
+        fock_final = self.hamiltonian.fock(density_a)  # NOTE: this should NOT contain any XC components
+        fock_final += (fock_tot - h_core) - (fock_a - h_core)
 
-    return fock_final, (
-        e_low_level.alpha.get("", 0.0)
-        + e_low_level.beta.get("", 0.0)
-        + e_low_level.beta_alpha.get("", 0.0)
-    )
+        return fock_final, (
+            e_low_level.alpha.get("", 0.0)
+            + e_low_level.beta.get("", 0.0)
+            + e_low_level.beta_alpha.get("", 0.0)
+        )
 
 
 def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock):
