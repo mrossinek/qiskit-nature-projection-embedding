@@ -13,12 +13,17 @@
 """Tests for the ProjectionTransformer."""
 
 import unittest
+from functools import partial
 from test import QiskitNatureTestCase
 
+import numpy as np
 from qiskit.test import slow_test
+
 import qiskit_nature.optionals as _optionals
 from qiskit_nature.second_q.drivers import MethodType, PySCFDriver
-from qiskit_nature.second_q.formats.qcschema_translator import get_ao_to_mo_from_qcschema
+from qiskit_nature.second_q.formats.qcschema_translator import \
+    get_ao_to_mo_from_qcschema
+from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
 from qiskit_nature.second_q.transformers import ProjectionTransformer
 
@@ -171,7 +176,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 H         -2.87394       -0.89898        0.00001;
                 H         -2.33417        0.56585        0.90131;
                 H         -2.33417        0.56584       -0.90131""",
-            basis="sto3g"
+            basis="sto3g",
         )
         driver.run_pyscf()
         qcschema = driver.to_qcschema()
@@ -214,7 +219,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 H         -2.33417        0.56584       -0.90131""",
             spin=2,
             method=MethodType.UHF,
-            basis="631g*"
+            basis="631g*",
         )
         driver.run_pyscf()
         qcschema = driver.to_qcschema()
@@ -237,6 +242,74 @@ class TestProjectionTransformer(QiskitNatureTestCase):
             self.assertEqual(problem.num_spatial_orbitals, 4)
             self.assertEqual(problem.num_alpha, 3)
             self.assertEqual(problem.num_beta, 1)
+
+    @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
+    def test_larger_system_dft(self):
+        """Tests a full run on a larger system."""
+        driver = PySCFDriver(
+            atom="""N          2.54840       -0.23120       -0.00000;
+                C          1.79831        0.04694       -0.00000;
+                C          0.37007        0.56616       -0.00000;
+                H          0.22595        1.20906       -0.90096;
+                H          0.22596        1.20907        0.90095;
+                C         -0.68181       -0.60624        0.00001;
+                H         -0.51758       -1.24375       -0.89892;
+                H         -0.51758       -1.24374        0.89895;
+                C         -2.14801       -0.05755        0.00001;
+                H         -2.87394       -0.89898        0.00001;
+                H         -2.33417        0.56585        0.90131;
+                H         -2.33417        0.56584       -0.90131""",
+            basis="sto3g",
+            xc_functional="pbe0",
+            method=MethodType.RKS,
+        )
+        driver.run_pyscf()
+        qcschema = driver.to_qcschema()
+        problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
+        basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
+        trafo = ProjectionTransformer(14, 10, basis_trafo, 4, 4)
+
+        def _fock_build_a(trafo, density_a, density_b):
+            density_tot = density_a + density_b
+
+            h_core = trafo.hamiltonian.electronic_integrals.one_body
+
+            pyscf_rho_a = np.asarray(density_a.trace_spin()["+-"])
+            pyscf_rho_tot = np.asarray(density_tot.trace_spin()["+-"])
+
+            pyscf_fock_a = driver._calc.get_fock(dm=pyscf_rho_a)
+            pyscf_fock_tot = driver._calc.get_fock(dm=pyscf_rho_tot)
+
+            e_low_level_a = driver._calc.energy_tot(dm=pyscf_rho_a)
+            e_low_level_tot = driver._calc.energy_tot(dm=pyscf_rho_tot)
+
+            fock_final = trafo.hamiltonian.fock(density_a)
+            h_core_a = h_core.alpha["+-"]
+            fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)
+            fock_final = ElectronicIntegrals.from_raw_integrals(fock_final.alpha["+-"] + fock_delta)
+
+            e_tot = e_low_level_tot - e_low_level_a
+
+            return fock_final, e_tot
+
+        trafo._fock_build_a = partial(_fock_build_a, trafo)
+
+        problem = trafo.transform(problem)
+
+        with self.subTest("energy shifts"):
+            self.assertEqual(
+                problem.hamiltonian.constants.keys(),
+                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+            )
+            self.assertAlmostEqual(
+                problem.hamiltonian.constants["ProjectionTransformer"], 5.8052028
+            )
+            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -207.264214689)
+
+        with self.subTest("more problem attributes"):
+            self.assertEqual(problem.num_spatial_orbitals, 4)
+            self.assertEqual(problem.num_alpha, 2)
+            self.assertEqual(problem.num_beta, 2)
 
 
 if __name__ == "__main__":

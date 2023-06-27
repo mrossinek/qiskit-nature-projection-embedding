@@ -617,17 +617,15 @@ class ProjectionTransformer(BaseTransformer):
 
         return result
 
-
     def _fock_build_a(
         self, density_a: ElectronicDensity, density_b: ElectronicDensity
     ):
         density_tot = density_a + density_b
 
-        # NOTE: in the DFT case, these need to include the XC components
+        h_core = self.hamiltonian.electronic_integrals.one_body
+
         fock_a = self.hamiltonian.fock(density_a)
         fock_tot = self.hamiltonian.fock(density_tot)
-
-        h_core = self.hamiltonian.electronic_integrals.one_body
 
         e_low_level = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ij": ("+-", "+-", "")},
@@ -639,11 +637,8 @@ class ProjectionTransformer(BaseTransformer):
             fock_a + h_core,
             density_a,
         )
-        # TODO: in the DFT case we need to additionally deal with the XC components
-        # we can handle this via an optional callback
 
-        # NOTE: the following is written as it is because this reflects better how DFT will differ
-        fock_final = self.hamiltonian.fock(density_a)  # NOTE: this should NOT contain any XC components
+        fock_final = self.hamiltonian.fock(density_a)
         fock_final += (fock_tot - h_core) - (fock_a - h_core)
 
         return fock_final, (
