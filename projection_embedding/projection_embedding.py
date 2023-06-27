@@ -686,7 +686,55 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir, v_kern, validate=False
     )
 
-    # TODO: add an extension here to implement zeta (cf. JCTC 2019)
+    # TODO: make zeta configurable
+    zeta = 1
+    mo_coeff_vir_cur = mo_coeff_vir_new
+
+    for _ in range(zeta-1):
+        # mo_coeff_vir_new is the working variable
+        fock_cur_kern = ElectronicIntegrals.einsum(
+            {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_cur, fock, mo_coeff_vir_kern, validate=False
+        )
+
+        # TODO: improve the following 7 lines
+        r_t_alpha: np.ndarray = None
+        if "+-" in fock_cur_kern.alpha:
+            _, _, r_t_alpha = np.linalg.svd(fock_cur_kern.alpha["+-"], full_matrices=True)
+
+        r_t_beta: np.ndarray = None
+        if "+-" in fock_cur_kern.beta:
+            _, _, r_t_beta = np.linalg.svd(fock_cur_kern.beta["+-"], full_matrices=True)
+
+        r_t = ElectronicIntegrals.from_raw_integrals(r_t_alpha, h1_b=r_t_beta, validate=False)
+        r_t_t = ElectronicIntegrals.apply(np.transpose, r_t, validate=False)
+
+        # update
+        mo_coeff_vir_kern_ncols = mo_coeff_vir_kern.alpha["+-"].shape[1]
+        mo_coeff_vir_cur_ncols = mo_coeff_vir_cur.alpha["+-"].shape[1]
+
+        if mo_coeff_vir_kern_ncols > mo_coeff_vir_cur_ncols:
+            r_t_t_left, r_t_t_right = r_t_t.apply(np.hsplit, [mo_coeff_vir_cur_ncols], validate=False)
+            mo_coeff_vir_cur = ElectronicIntegrals.einsum(
+                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_kern, r_t_t_left, validate=False
+            )
+            mo_coeff_vir_kern = ElectronicIntegrals.einsum(
+                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_kern, r_t_t_right, validate=False
+            )
+        else:
+            mo_coeff_vir_cur = ElectronicIntegrals.einsum(
+                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_kern, r_t_t, validate=False
+            )
+            mo_coeff_vir_kern = ElectronicIntegrals.from_raw_integrals(
+                np.zeros_like(mo_coeff_vir_kern.alpha["+-"]),
+                h1_b=None if mo_coeff_vir_kern.beta.is_empty() else np.zeros_like(mo_coeff_vir_kern.beta["+-"]),
+                validate=False,
+            )
+
+        mo_coeff_vir_new = ElectronicIntegrals.stack(
+            np.hstack,
+            (mo_coeff_vir_new, mo_coeff_vir_cur),
+            validate=False,
+        )
 
     # post-processing step
     logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
