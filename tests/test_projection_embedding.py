@@ -21,8 +21,7 @@ from qiskit.test import slow_test
 
 import qiskit_nature.optionals as _optionals
 from qiskit_nature.second_q.drivers import MethodType, PySCFDriver
-from qiskit_nature.second_q.formats.qcschema_translator import \
-    get_ao_to_mo_from_qcschema
+from qiskit_nature.second_q.formats.qcschema_translator import get_ao_to_mo_from_qcschema
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
 from qiskit_nature.second_q.transformers import ProjectionTransformer
@@ -354,13 +353,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 dens = np.outer(col, col)
                 PS = np.dot(dens, overlap)
 
-                pop[i,0] = np.trace(PS[:num_bf, :num_bf])
-                pop[i,1] = np.trace(PS[num_bf:, num_bf:])
+                pop[i, 0] = np.trace(PS[:num_bf, :num_bf])
+                pop[i, 1] = np.trace(PS[num_bf:, num_bf:])
 
             print(nocc, nocc_a, nocc_b, num_bf)
 
-            pop_order_1 = np.argsort(-1 * pop[:,0])
-            pop_order_2 = np.argsort(-1 * pop[:,1])
+            pop_order_1 = np.argsort(-1 * pop[:, 0])
+            pop_order_2 = np.argsort(-1 * pop[:, 1])
 
             orbid_1 = pop_order_1[:nocc_a]
             orbid_2 = pop_order_2[:nocc_b]
@@ -373,9 +372,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
             fragment_2 = np.zeros((nao, nocc_b))
 
             for i in range(nocc_a):
-                fragment_1[:,i] = mo[:,orbid_1[i]]
+                fragment_1[:, i] = mo[:, orbid_1[i]]
             for i in range(nocc_b):
-                fragment_2[:,i] = mo[:,orbid_2[i]]
+                fragment_2[:, i] = mo[:, orbid_2[i]]
 
             return (
                 ElectronicIntegrals.from_raw_integrals(fragment_1, validate=False),
@@ -415,9 +414,7 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 problem.hamiltonian.constants.keys(),
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
-            self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 5.797826
-            )
+            self.assertAlmostEqual(problem.hamiltonian.constants["ProjectionTransformer"], 5.797826)
             self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -207.22327435)
 
         with self.subTest("more problem attributes"):

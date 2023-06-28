@@ -21,13 +21,14 @@ import numpy as np
 import scipy.linalg as la
 
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy, Hamiltonian
-from qiskit_nature.second_q.operators import (ElectronicIntegrals,
-                                              PolynomialTensor)
-from qiskit_nature.second_q.problems import (BaseProblem, ElectronicBasis,
-                                             ElectronicStructureProblem)
-from qiskit_nature.second_q.properties import (AngularMomentum,
-                                               ElectronicDensity,
-                                               Magnetization, ParticleNumber)
+from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
+from qiskit_nature.second_q.problems import BaseProblem, ElectronicBasis, ElectronicStructureProblem
+from qiskit_nature.second_q.properties import (
+    AngularMomentum,
+    ElectronicDensity,
+    Magnetization,
+    ParticleNumber,
+)
 from qiskit_nature.utils import symmetric_orthogonalization
 
 from .base_transformer import BaseTransformer
@@ -512,7 +513,9 @@ class ProjectionTransformer(BaseTransformer):
 
         if self.num_frozen_occupied_orbitals is not None and self.num_active_orbitals is not None:
             max_orb = self.num_frozen_occupied_orbitals + self.num_active_orbitals
-            _, mo_coeff_final, _ = mo_coeff_final.split(np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False)
+            _, mo_coeff_final, _ = mo_coeff_final.split(
+                np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False
+            )
 
         logger.info("mo_coeff_final.alpha.shape %s", mo_coeff_final.alpha["+-"].shape)
         logger.info("mo_coeff_final.beta.shape %s", mo_coeff_final.beta["+-"].shape)
@@ -620,9 +623,7 @@ class ProjectionTransformer(BaseTransformer):
 
         return result
 
-    def _fock_build_a(
-        self, density_a: ElectronicDensity, density_b: ElectronicDensity
-    ):
+    def _fock_build_a(self, density_a: ElectronicDensity, density_b: ElectronicDensity):
         density_tot = density_a + density_b
 
         h_core = self.hamiltonian.electronic_integrals.one_body
@@ -651,7 +652,11 @@ class ProjectionTransformer(BaseTransformer):
         )
 
     def _spade_partition(
-        self, overlap: np.ndarray, mo_coeff_occ: ElectronicIntegrals, num_bf: int, nocc_a: tuple[int, int]
+        self,
+        overlap: np.ndarray,
+        mo_coeff_occ: ElectronicIntegrals,
+        num_bf: int,
+        nocc_a: tuple[int, int],
     ):
         logger.info("")
         logger.info("Doing SPADE partitioning")
@@ -691,8 +696,12 @@ class ProjectionTransformer(BaseTransformer):
         right = ElectronicIntegrals(right_a, right_b, validate=False)
 
         return (
-            ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, left, validate=False),
-            ElectronicIntegrals.einsum({"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, right, validate=False),
+            ElectronicIntegrals.einsum(
+                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, left, validate=False
+            ),
+            ElectronicIntegrals.einsum(
+                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, right, validate=False
+            ),
         )
 
 
@@ -744,7 +753,7 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     zeta = 1
     mo_coeff_vir_cur = mo_coeff_vir_new
 
-    for _ in range(zeta-1):
+    for _ in range(zeta - 1):
         # mo_coeff_vir_new is the working variable
         fock_cur_kern = ElectronicIntegrals.einsum(
             {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_cur, fock, mo_coeff_vir_kern, validate=False
@@ -767,7 +776,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         mo_coeff_vir_cur_ncols = mo_coeff_vir_cur.alpha["+-"].shape[1]
 
         if mo_coeff_vir_kern_ncols > mo_coeff_vir_cur_ncols:
-            r_t_t_left, r_t_t_right = r_t_t.apply(np.hsplit, [mo_coeff_vir_cur_ncols], validate=False)
+            r_t_t_left, r_t_t_right = r_t_t.apply(
+                np.hsplit, [mo_coeff_vir_cur_ncols], validate=False
+            )
             mo_coeff_vir_cur = ElectronicIntegrals.einsum(
                 {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_kern, r_t_t_left, validate=False
             )
@@ -780,7 +791,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
             )
             mo_coeff_vir_kern = ElectronicIntegrals.from_raw_integrals(
                 np.zeros_like(mo_coeff_vir_kern.alpha["+-"]),
-                h1_b=None if mo_coeff_vir_kern.beta.is_empty() else np.zeros_like(mo_coeff_vir_kern.beta["+-"]),
+                h1_b=None
+                if mo_coeff_vir_kern.beta.is_empty()
+                else np.zeros_like(mo_coeff_vir_kern.beta["+-"]),
                 validate=False,
             )
 
