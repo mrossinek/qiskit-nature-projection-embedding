@@ -1,0 +1,25 @@
+[project]
+name = "projection_embedding"
+version = "0.0.1"
+license = { text="Apache-2.0" }
+authors = [
+  { name="Max Rossmannek", email="oss@zurich.ibm.com" },
+]
+description = "A projection embedding transformer for Qiskit Nature"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "qiskit-nature~=0.7.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["projection_embedding"]
