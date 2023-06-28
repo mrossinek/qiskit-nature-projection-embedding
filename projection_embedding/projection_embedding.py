@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import cast
 
 import numpy as np
@@ -198,17 +199,8 @@ class ProjectionTransformer(BaseTransformer):
         # TODO: actually make this SCF loop a standalone method
         for scf_iter in range(1, max_iter + 1):
 
-            # TODO: improve the following 7 lines
-            mo_coeff_a_full_alpha: np.ndarray = None
-            if "+-" in fock.alpha:
-                _, mo_coeff_a_full_alpha = la.eigh(fock.alpha["+-"], overlap.alpha["+-"])
-
-            mo_coeff_a_full_beta: np.ndarray = None
-            if "+-" in fock.beta:
-                _, mo_coeff_a_full_beta = la.eigh(fock.beta["+-"], overlap.alpha["+-"])
-
-            mo_coeff_a_full = ElectronicIntegrals.from_raw_integrals(
-                mo_coeff_a_full_alpha, h1_b=mo_coeff_a_full_beta, validate=False
+            _, mo_coeff_a_full = ElectronicIntegrals.apply(
+                la.eigh, fock, overlap, multi=True, validate=False
             )
 
             fragment_a_alpha, _ = mo_coeff_a_full.alpha.split(
@@ -383,22 +375,11 @@ class ProjectionTransformer(BaseTransformer):
                 validate=False,
             )
 
-            # TODO: improve the following 7 lines
-            eigval_alpha, eigvec_alpha = None, None
-            if "+-" in einsummed.alpha:
-                eigval_alpha, eigvec_alpha = np.linalg.eigh(einsummed.alpha["+-"])
-                eigval_alpha = np.linalg.inv(np.diag(np.sqrt(eigval_alpha)))
-
-            eigval_beta, eigvec_beta = None, None
-            if "+-" in einsummed.beta:
-                eigval_beta, eigvec_beta = np.linalg.eigh(einsummed.beta["+-"])
-                eigval_beta = np.linalg.inv(np.diag(np.sqrt(eigval_beta)))
-
-            eigvec = ElectronicIntegrals.from_raw_integrals(
-                eigvec_alpha, h1_b=eigvec_beta, validate=False
+            eigval, eigvec = ElectronicIntegrals.apply(
+                np.linalg.eigh, einsummed, multi=True, validate=False
             )
-            eigval = ElectronicIntegrals.from_raw_integrals(
-                eigval_alpha, h1_b=eigval_beta, validate=False
+            eigval = ElectronicIntegrals.apply(
+                lambda arr: np.linalg.inv(np.diag(np.sqrt(arr))), eigval, validate=False
             )
 
             mo_coeff_vir_ints = ElectronicIntegrals.einsum(
@@ -417,17 +398,8 @@ class ProjectionTransformer(BaseTransformer):
                 validate=False,
             )
 
-            # TODO: improve the following 7 lines
-            eigvec_fock_alpha = None
-            if "+-" in einsummed.alpha:
-                _, eigvec_fock_alpha = np.linalg.eigh(einsummed.alpha["+-"])
-
-            eigvec_fock_beta = None
-            if "+-" in einsummed.beta:
-                _, eigvec_fock_beta = np.linalg.eigh(einsummed.beta["+-"])
-
-            eigvec_fock = ElectronicIntegrals.from_raw_integrals(
-                eigvec_fock_alpha, h1_b=eigvec_fock_beta, validate=False
+            _, eigvec_fock = ElectronicIntegrals.apply(
+                np.linalg.eigh, einsummed, multi=True, validate=False
             )
 
             mo_coeff_vir_ints = ElectronicIntegrals.einsum(
@@ -675,18 +647,14 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff_tmp, _ = mo_coeff_tmp.split(np.vsplit, [num_bf], validate=False)
 
         # 4. use SVD to find the final rotation matrix
-        # TODO: improve the following 7 lines
-        rot_alpha: np.ndarray = None
-        if "+-" in mo_coeff_tmp.alpha:
-            _, _, rot_alpha = np.linalg.svd(mo_coeff_tmp.alpha["+-"], full_matrices=True)
-            rot_alpha = rot_alpha.T
+        _, _, rot = ElectronicIntegrals.apply(
+            partial(np.linalg.svd, full_matrices=True),
+            mo_coeff_tmp,
+            multi=True,
+            validate=False,
+        )
+        rot_t = ElectronicIntegrals.apply(np.transpose, rot, validate=False)
 
-        rot_beta: np.ndarray = None
-        if "+-" in mo_coeff_tmp.beta:
-            _, _, rot_beta = np.linalg.svd(mo_coeff_tmp.beta["+-"], full_matrices=True)
-            rot_beta = rot_beta.T
-
-        rot_t = ElectronicIntegrals.from_raw_integrals(rot_alpha, h1_b=rot_beta, validate=False)
         nocc_a_alpha, nocc_a_beta = nocc_a
         left_a, right_a = rot_t.alpha.split(np.hsplit, [nocc_a_alpha], validate=False)
         left_b, right_b = None, None
@@ -724,16 +692,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     einsummed = ElectronicIntegrals.einsum(
         {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_pb, overlap_pb_wb, mo_coeff_vir, validate=False
     )
-    # TODO: improve the following 7 lines
-    v_t_alpha: np.ndarray = None
-    if "+-" in einsummed.alpha:
-        _, _, v_t_alpha = np.linalg.svd(einsummed.alpha["+-"], full_matrices=True)
-
-    v_t_beta: np.ndarray = None
-    if "+-" in einsummed.beta:
-        _, _, v_t_beta = np.linalg.svd(einsummed.beta["+-"], full_matrices=True)
-
-    v_t = ElectronicIntegrals.from_raw_integrals(v_t_alpha, h1_b=v_t_beta, validate=False)
+    _, _, v_t = ElectronicIntegrals.apply(
+        partial(np.linalg.svd, full_matrices=True), einsummed, multi=True, validate=False
+    )
 
     # Eq. (10b)
     v_t_t = ElectronicIntegrals.apply(np.transpose, v_t, validate=False)
@@ -759,16 +720,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
             {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_cur, fock, mo_coeff_vir_kern, validate=False
         )
 
-        # TODO: improve the following 7 lines
-        r_t_alpha: np.ndarray = None
-        if "+-" in fock_cur_kern.alpha:
-            _, _, r_t_alpha = np.linalg.svd(fock_cur_kern.alpha["+-"], full_matrices=True)
-
-        r_t_beta: np.ndarray = None
-        if "+-" in fock_cur_kern.beta:
-            _, _, r_t_beta = np.linalg.svd(fock_cur_kern.beta["+-"], full_matrices=True)
-
-        r_t = ElectronicIntegrals.from_raw_integrals(r_t_alpha, h1_b=r_t_beta, validate=False)
+        _, _, r_t = ElectronicIntegrals.apply(
+            partial(np.linalg.svd, full_matrices=True), fock_cur_kern, multi=True, validate=False
+        )
         r_t_t = ElectronicIntegrals.apply(np.transpose, r_t, validate=False)
 
         # update
@@ -810,16 +764,9 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_new, fock, mo_coeff_vir_new, validate=False
     )
 
-    # TODO: improve the following 7 lines
-    _, eigvec_alpha = None, None
-    if "+-" in einsummed.alpha:
-        _, eigvec_alpha = np.linalg.eigh(einsummed.alpha["+-"])
-
-    _, eigvec_beta = None, None
-    if "+-" in einsummed.beta:
-        _, eigvec_beta = np.linalg.eigh(einsummed.beta["+-"])
-
-    eigvec = ElectronicIntegrals.from_raw_integrals(eigvec_alpha, h1_b=eigvec_beta, validate=False)
+    _, eigvec = ElectronicIntegrals.apply(
+        np.linalg.eigh, einsummed, multi=True, validate=False
+    )
 
     mo_coeff_vir_new = ElectronicIntegrals.einsum(
         {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_new, eigvec, validate=False
