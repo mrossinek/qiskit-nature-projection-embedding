@@ -31,8 +31,7 @@ from qiskit_nature.second_q.properties import (
     ParticleNumber,
 )
 
-from .base_transformer import BaseTransformer
-from .basis_transformer import BasisTransformer
+from qiskit_nature.second_q.transformers import BaseTransformer, BasisTransformer
 
 logger = logging.getLogger(__name__)
 

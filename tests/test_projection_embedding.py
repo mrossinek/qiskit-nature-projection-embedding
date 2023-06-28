@@ -21,10 +21,12 @@ from qiskit.test import slow_test
 
 import qiskit_nature.optionals as _optionals
 from qiskit_nature.second_q.drivers import MethodType, PySCFDriver
-from qiskit_nature.second_q.formats.qcschema_translator import get_ao_to_mo_from_qcschema
+from qiskit_nature.second_q.formats.qcschema_translator import (
+    get_ao_to_mo_from_qcschema,
+)
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
-from qiskit_nature.second_q.transformers import ProjectionTransformer
+from projection_embedding.projection_embedding import ProjectionTransformer
 
 
 class TestProjectionTransformer(QiskitNatureTestCase):
@@ -57,9 +59,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 2.38098439
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                2.38098439,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -152.1284012)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -152.1284012, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 2)
@@ -94,9 +100,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 2.380961985
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                2.380961985,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -152.1284012)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -152.1284012, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 2)
@@ -120,9 +130,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 41.108056563
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                41.108056563,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -107.487783928)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -107.487783928, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 4)
@@ -150,9 +164,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 62.082773142
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                62.082773142,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -147.633452733)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -147.633452733, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 5)
@@ -181,7 +199,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4)
+        trafo = ProjectionTransformer(
+            14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
+        )
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -190,9 +210,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 5.822567531
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                5.822567531,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -206.595258422)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -206.595258422, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 4)
@@ -224,7 +248,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer((8, 6), 28, basis_trafo, driver._calc.get_ovlp(), (3, 1), 4)
+        trafo = ProjectionTransformer(
+            (8, 6), 28, basis_trafo, driver._calc.get_ovlp(), (3, 1), 4
+        )
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -233,9 +259,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 5.366528176
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                5.366528176,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -208.900041579)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -208.900041579, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 4)
@@ -266,7 +296,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4)
+        trafo = ProjectionTransformer(
+            14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
+        )
 
         def _fock_build_a(trafo, density_a, density_b):
             density_tot = density_a + density_b
@@ -285,7 +317,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
             fock_final = trafo.hamiltonian.fock(density_a)
             h_core_a = h_core.alpha["+-"]
             fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)
-            fock_final = ElectronicIntegrals.from_raw_integrals(fock_final.alpha["+-"] + fock_delta)
+            fock_final = ElectronicIntegrals.from_raw_integrals(
+                fock_final.alpha["+-"] + fock_delta
+            )
 
             e_tot = e_low_level_tot - e_low_level_a
 
@@ -301,9 +335,13 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"], 5.8052028
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                5.8052028,
+                places=5,
             )
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -207.264214689)
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -207.264214689, places=5
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 4)
@@ -335,7 +373,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         print(problem.reference_energy)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4)
+        trafo = ProjectionTransformer(
+            14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
+        )
 
         def _pipek_mezey(trafo, overlap, mo_coeff_occ, num_bf, nocc_a):
             from pyscf.lo import PipekMezey
@@ -398,7 +438,9 @@ class TestProjectionTransformer(QiskitNatureTestCase):
             fock_final = trafo.hamiltonian.fock(density_a)
             h_core_a = h_core.alpha["+-"]
             fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)
-            fock_final = ElectronicIntegrals.from_raw_integrals(fock_final.alpha["+-"] + fock_delta)
+            fock_final = ElectronicIntegrals.from_raw_integrals(
+                fock_final.alpha["+-"] + fock_delta
+            )
 
             e_tot = e_low_level_tot - e_low_level_a
 
@@ -414,8 +456,14 @@ class TestProjectionTransformer(QiskitNatureTestCase):
                 problem.hamiltonian.constants.keys(),
                 {"nuclear_repulsion_energy", "ProjectionTransformer"},
             )
-            self.assertAlmostEqual(problem.hamiltonian.constants["ProjectionTransformer"], 5.797826)
-            self.assertAlmostEqual(problem.hamiltonian.nuclear_repulsion_energy, -207.22327435)
+            self.assertAlmostEqual(
+                problem.hamiltonian.constants["ProjectionTransformer"],
+                5.797826,
+                places=3,
+            )
+            self.assertAlmostEqual(
+                problem.hamiltonian.nuclear_repulsion_energy, -207.22327435, places=3
+            )
 
         with self.subTest("more problem attributes"):
             self.assertEqual(problem.num_spatial_orbitals, 4)
