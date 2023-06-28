@@ -23,7 +23,11 @@ import scipy.linalg as la
 
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy, Hamiltonian
 from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
-from qiskit_nature.second_q.problems import BaseProblem, ElectronicBasis, ElectronicStructureProblem
+from qiskit_nature.second_q.problems import (
+    BaseProblem,
+    ElectronicBasis,
+    ElectronicStructureProblem,
+)
 from qiskit_nature.second_q.properties import (
     AngularMomentum,
     ElectronicDensity,
@@ -42,10 +46,14 @@ def _split_elec_ints_per_spin(
     alpha_indices: int | Sequence[int],
     beta_indices: int | Sequence[int],
 ) -> tuple[ElectronicIntegrals, ElectronicIntegrals]:
-    left_a, right_a = integrals.alpha.split(splitting_func, alpha_indices, validate=False)
+    left_a, right_a = integrals.alpha.split(
+        splitting_func, alpha_indices, validate=False
+    )
     left_b, right_b = None, None
     if not integrals.beta.is_empty():
-        left_b, right_b = integrals.beta.split(splitting_func, beta_indices, validate=False)
+        left_b, right_b = integrals.beta.split(
+            splitting_func, beta_indices, validate=False
+        )
     return (
         ElectronicIntegrals(left_a, left_b, validate=False),
         ElectronicIntegrals(right_a, right_b, validate=False),
@@ -57,7 +65,8 @@ class ProjectionEmbedding(BaseTransformer):
 
     def __init__(
         self,
-        num_electrons: int | tuple[int, int],  # the number of electrons in the "active" subsystem A
+        num_electrons: int
+        | tuple[int, int],  # the number of electrons in the "active" subsystem A
         num_basis_functions: int,  # the number of basis functions in the "active" subsystem A
         basis_transformer: BasisTransformer,
         overlap_matrix: np.ndarray,
@@ -80,7 +89,9 @@ class ProjectionEmbedding(BaseTransformer):
                 )
 
             if isinstance(num_active_electrons, int):
-                self.num_frozen_occupied_orbitals = (num_electrons - num_active_electrons) // 2
+                self.num_frozen_occupied_orbitals = (
+                    num_electrons - num_active_electrons
+                ) // 2
 
             elif isinstance(num_active_electrons, tuple):
                 num_frozen_alpha = num_electrons[0] - num_active_electrons[0]
@@ -99,7 +110,6 @@ class ProjectionEmbedding(BaseTransformer):
 
         self.basis_transformer = basis_transformer
         self.overlap = ElectronicIntegrals.from_raw_integrals(overlap_matrix)
-
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
         """TODO."""
@@ -143,7 +153,9 @@ class ProjectionEmbedding(BaseTransformer):
         # associated with it yet...
         # NOTE: this will be fixed by https://github.com/qiskit-community/qiskit-nature/pull/1216
         if not self.basis_transformer.coefficients.beta.is_empty():
-            self.hamiltonian.electronic_integrals.beta = self.hamiltonian.electronic_integrals.alpha
+            self.hamiltonian.electronic_integrals.beta = (
+                self.hamiltonian.electronic_integrals.alpha
+            )
             self.hamiltonian.electronic_integrals.beta_alpha = (
                 self.hamiltonian.electronic_integrals.two_body.alpha
             )
@@ -176,10 +188,14 @@ class ProjectionEmbedding(BaseTransformer):
         # NOTE: fragment_a will ONLY change if the SCF loop below is necessary to ensure consistent
         # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
 
-        density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
+        density_a = ElectronicDensity.einsum(
+            {"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a
+        )
         if density_a.beta.is_empty():
             density_a.beta = density_a.alpha
-        density_b = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_b, fragment_b)
+        density_b = ElectronicDensity.einsum(
+            {"ij,kj->ik": ("+-",) * 3}, fragment_b, fragment_b
+        )
         if density_b.beta.is_empty():
             density_b.beta = density_b.alpha
 
@@ -188,7 +204,8 @@ class ProjectionEmbedding(BaseTransformer):
 
         e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            self.hamiltonian.electronic_integrals.one_body + self.hamiltonian.fock(density_a),
+            self.hamiltonian.electronic_integrals.one_body
+            + self.hamiltonian.fock(density_a),
             density_a,
         )
 
@@ -202,12 +219,15 @@ class ProjectionEmbedding(BaseTransformer):
         logger.debug("e_new_a %s", e_new_a)
 
         identity = ElectronicIntegrals.from_raw_integrals(
-            np.identity(nao), h1_b=None if density_b.beta.is_empty() else np.identity(nao)
+            np.identity(nao),
+            h1_b=None if density_b.beta.is_empty() else np.identity(nao),
         )
         projector = identity - ElectronicIntegrals.einsum(
             {"ij,jk->ik": ("+-",) * 3}, self.overlap, density_b
         )
-        fock = ElectronicIntegrals.einsum({"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector)
+        fock = ElectronicIntegrals.einsum(
+            {"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector
+        )
 
         e_old = 0
         # TODO: make these configurable
@@ -224,7 +244,6 @@ class ProjectionEmbedding(BaseTransformer):
 
         # TODO: actually make this SCF loop a standalone method
         for scf_iter in range(1, max_iter + 1):
-
             _, mo_coeff_a_full = ElectronicIntegrals.apply(
                 la.eigh, fock, self.overlap, multi=True, validate=False
             )
@@ -236,7 +255,9 @@ class ProjectionEmbedding(BaseTransformer):
                 [nocc_a_beta],
             )
 
-            density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
+            density_a = ElectronicDensity.einsum(
+                {"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a
+            )
 
             fock, e_low_level = self._fock_build_a(density_a, density_b)
             logger.debug("e_low_level %s", e_low_level)
@@ -250,7 +271,8 @@ class ProjectionEmbedding(BaseTransformer):
 
             e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
                 {"ij,ji": ("+-", "+-", "")},
-                self.hamiltonian.electronic_integrals.one_body + self.hamiltonian.fock(density_a),
+                self.hamiltonian.electronic_integrals.one_body
+                + self.hamiltonian.fock(density_a),
                 density_a,
             )
 
@@ -284,7 +306,12 @@ class ProjectionEmbedding(BaseTransformer):
             logger.debug("dRMS_a %s", dRMS_a)
             logger.debug("dRMS_b %s", dRMS_b)
 
-            logger.info("SCF Iteration %s: Energy = %s dE = %s", scf_iter, e_new_a, e_new_a - e_old)
+            logger.info(
+                "SCF Iteration %s: Energy = %s dE = %s",
+                scf_iter,
+                e_new_a,
+                e_new_a - e_old,
+            )
 
             # SCF Converged?
             if abs(e_new_a - e_old) < e_thres and (dRMS_a < 1e-3 and dRMS_b < 1e-3):
@@ -427,7 +454,10 @@ class ProjectionEmbedding(BaseTransformer):
             )
 
             mo_coeff_vir_ints = ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_ints, eigvec_fock, validate=False
+                {"ij,jk->ik": ("+-",) * 3},
+                mo_coeff_vir_ints,
+                eigvec_fock,
+                validate=False,
             )
 
         logger.info("nocc_a_alpha %s", nocc_a_alpha)
@@ -441,10 +471,12 @@ class ProjectionEmbedding(BaseTransformer):
             (nvir_a_alpha, nvir_a_beta),
             (nvir_b_alpha, nvir_b_beta),
         ) = _concentric_localization(
-            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[0],
-            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[0].split(
-                np.hsplit, [self.num_basis_functions], validate=False
-            )[0],
+            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[
+                0
+            ],
+            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[
+                0
+            ].split(np.hsplit, [self.num_basis_functions], validate=False)[0],
             mo_coeff_vir_ints,
             self.num_basis_functions,
             fock,
@@ -552,14 +584,22 @@ class ProjectionEmbedding(BaseTransformer):
         orbital_energy = ElectronicIntegrals.apply(
             lambda arr: np.diag(np.diag(arr)),
             ElectronicIntegrals.einsum(
-                {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_final, fock, mo_coeff_final, validate=False
+                {"ji,jk,kl->il": ("+-",) * 4},
+                mo_coeff_final,
+                fock,
+                mo_coeff_final,
+                validate=False,
             ),
         )
 
         self.mo_coeff_final = mo_coeff_final
-        transform = BasisTransformer(ElectronicBasis.AO, ElectronicBasis.MO, mo_coeff_final)
+        transform = BasisTransformer(
+            ElectronicBasis.AO, ElectronicBasis.MO, mo_coeff_final
+        )
 
-        new_hamiltonian = cast(ElectronicEnergy, transform.transform_hamiltonian(self.hamiltonian))
+        new_hamiltonian = cast(
+            ElectronicEnergy, transform.transform_hamiltonian(self.hamiltonian)
+        )
         # now, new_hamiltonian is simply the hamiltonian we started with but transformed into the
         # projected MO basis (which is limited to subsystem A)
 
@@ -572,7 +612,8 @@ class ProjectionEmbedding(BaseTransformer):
 
         e_new_a_only = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            new_hamiltonian.electronic_integrals.one_body + new_hamiltonian.fock(only_a),
+            new_hamiltonian.electronic_integrals.one_body
+            + new_hamiltonian.fock(only_a),
             only_a,
         )
 
@@ -595,7 +636,8 @@ class ProjectionEmbedding(BaseTransformer):
 
         e_new_a_only = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
-            new_hamiltonian.electronic_integrals.one_body + new_hamiltonian.fock(only_a),
+            new_hamiltonian.electronic_integrals.one_body
+            + new_hamiltonian.fock(only_a),
             only_a,
         )
 
@@ -625,7 +667,9 @@ class ProjectionEmbedding(BaseTransformer):
             if isinstance(prop, (AngularMomentum, Magnetization, ParticleNumber)):
                 result.properties.add(prop.__class__(result.num_spatial_orbitals))
             else:
-                logger.warning("Encountered an unsupported property of type '%s'.", type(prop))
+                logger.warning(
+                    "Encountered an unsupported property of type '%s'.", type(prop)
+                )
 
         return result
 
@@ -690,7 +734,9 @@ class ProjectionEmbedding(BaseTransformer):
         rot_t = ElectronicIntegrals.apply(np.transpose, rot, validate=False)
 
         nocc_a_alpha, nocc_a_beta = nocc_a
-        left, right = _split_elec_ints_per_spin(rot_t, np.hsplit, [nocc_a_alpha], [nocc_a_beta])
+        left, right = _split_elec_ints_per_spin(
+            rot_t, np.hsplit, [nocc_a_alpha], [nocc_a_beta]
+        )
 
         return (
             ElectronicIntegrals.einsum(
@@ -702,7 +748,9 @@ class ProjectionEmbedding(BaseTransformer):
         )
 
 
-def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock):
+def _concentric_localization(
+    overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock
+):
     logger.info("")
     logger.info("Doing concentric location and truncation of virtual space")
     logger.info("    Concentric localization and truncation for virtuals    ")
@@ -710,19 +758,32 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     logger.info("")
 
     # S^{-1} in paper
-    overlap_a_pb_inv = ElectronicIntegrals.apply(np.linalg.inv, projection_basis, validate=False)
+    overlap_a_pb_inv = ElectronicIntegrals.apply(
+        np.linalg.inv, projection_basis, validate=False
+    )
 
     # C'_{vir} in paper
     mo_coeff_vir_pb = ElectronicIntegrals.einsum(
-        {"ij,jk,kl->il": ("+-",) * 4}, overlap_a_pb_inv, overlap_pb_wb, mo_coeff_vir, validate=False
+        {"ij,jk,kl->il": ("+-",) * 4},
+        overlap_a_pb_inv,
+        overlap_pb_wb,
+        mo_coeff_vir,
+        validate=False,
     )
 
     # Eq. (10a)
     einsummed = ElectronicIntegrals.einsum(
-        {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_pb, overlap_pb_wb, mo_coeff_vir, validate=False
+        {"ji,jk,kl->il": ("+-",) * 4},
+        mo_coeff_vir_pb,
+        overlap_pb_wb,
+        mo_coeff_vir,
+        validate=False,
     )
     _, _, v_t = ElectronicIntegrals.apply(
-        partial(np.linalg.svd, full_matrices=True), einsummed, multi=True, validate=False
+        partial(np.linalg.svd, full_matrices=True),
+        einsummed,
+        multi=True,
+        validate=False,
     )
 
     # Eq. (10b)
@@ -746,11 +807,18 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     for _ in range(zeta - 1):
         # mo_coeff_vir_new is the working variable
         fock_cur_kern = ElectronicIntegrals.einsum(
-            {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_cur, fock, mo_coeff_vir_kern, validate=False
+            {"ji,jk,kl->il": ("+-",) * 4},
+            mo_coeff_vir_cur,
+            fock,
+            mo_coeff_vir_kern,
+            validate=False,
         )
 
         _, _, r_t = ElectronicIntegrals.apply(
-            partial(np.linalg.svd, full_matrices=True), fock_cur_kern, multi=True, validate=False
+            partial(np.linalg.svd, full_matrices=True),
+            fock_cur_kern,
+            multi=True,
+            validate=False,
         )
         r_t_t = ElectronicIntegrals.apply(np.transpose, r_t, validate=False)
 
@@ -763,10 +831,16 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
                 np.hsplit, [mo_coeff_vir_cur_ncols], validate=False
             )
             mo_coeff_vir_cur = ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_kern, r_t_t_left, validate=False
+                {"ij,jk->ik": ("+-",) * 3},
+                mo_coeff_vir_kern,
+                r_t_t_left,
+                validate=False,
             )
             mo_coeff_vir_kern = ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_kern, r_t_t_right, validate=False
+                {"ij,jk->ik": ("+-",) * 3},
+                mo_coeff_vir_kern,
+                r_t_t_right,
+                validate=False,
             )
         else:
             mo_coeff_vir_cur = ElectronicIntegrals.einsum(
@@ -790,7 +864,11 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     logger.info("Pseudocanonicalizing the selected and excluded virtuals separately")
 
     einsummed = ElectronicIntegrals.einsum(
-        {"ji,jk,kl->il": ("+-",) * 4}, mo_coeff_vir_new, fock, mo_coeff_vir_new, validate=False
+        {"ji,jk,kl->il": ("+-",) * 4},
+        mo_coeff_vir_new,
+        fock,
+        mo_coeff_vir_new,
+        validate=False,
     )
 
     _, eigvec = ElectronicIntegrals.apply(
@@ -877,7 +955,9 @@ def symmetric_orthogonalization(matrix: ElectronicIntegrals) -> ElectronicIntegr
     eigval = ElectronicIntegrals.apply(
         lambda arr: np.diag(np.sqrt(arr)), eigval, validate=False
     )
-    return ElectronicIntegrals.einsum({"ik,kj,lj->il": ("+-",) * 4}, eigvec, eigval, eigvec)
+    return ElectronicIntegrals.einsum(
+        {"ik,kj,lj->il": ("+-",) * 4}, eigvec, eigval, eigvec
+    )
     eigvals, eigvecs = np.linalg.eigh(matrix)
     eigvals = np.diag(np.sqrt(eigvals))
     # TODO: change to allow opt_einsum
