@@ -14,7 +14,6 @@
 
 import unittest
 from functools import partial
-from test import QiskitNatureTestCase
 
 import numpy as np
 from qiskit.test import slow_test
@@ -29,7 +28,7 @@ from qiskit_nature.second_q.problems import ElectronicBasis
 from projection_embedding.projection_embedding import ProjectionTransformer
 
 
-class TestProjectionTransformer(QiskitNatureTestCase):
+class TestProjectionTransformer(unittest.TestCase):
     """ProjectionTransformer tests."""
 
     @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
