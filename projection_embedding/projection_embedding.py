@@ -255,64 +255,7 @@ class ProjectionEmbedding(BaseTransformer):
             validate=False,
         )
 
-        if (
-            np.linalg.norm(mo_coeff_projected.alpha["+-"]) < 1e-05
-            and np.linalg.norm(mo_coeff_projected.beta["+-"]) < 1e-05
-        ):
-            logger.info("occupied and unoccupied are orthogonal")
-            nonorthogonal = False
-        else:
-            logger.info("occupied and unoccupied are NOT orthogonal")
-            nonorthogonal = True
-
-        # orthogonalization procedure
-        # TODO: extract this into a separate method
-        if nonorthogonal:
-            # method related to projected atomic orbitals (PAOs)
-            # P. Pulay, Chem. Phys. Lett. 100, 151 (1983).
-            mo_coeff_vir_projected = mo_coeff_vir_ints - mo_coeff_projected
-
-            einsummed = ElectronicIntegrals.einsum(
-                {"ji,jk,kl->il": ("+-",) * 4},
-                mo_coeff_vir_projected,
-                self.overlap,
-                mo_coeff_vir_projected,
-                validate=False,
-            )
-
-            eigval, eigvec = ElectronicIntegrals.apply(
-                np.linalg.eigh, einsummed, multi=True, validate=False
-            )
-            eigval = ElectronicIntegrals.apply(
-                lambda arr: np.linalg.inv(np.diag(np.sqrt(arr))), eigval, validate=False
-            )
-
-            mo_coeff_vir_ints = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-",) * 4},
-                mo_coeff_vir_projected,
-                eigvec,
-                eigval,
-                validate=False,
-            )
-
-            einsummed = ElectronicIntegrals.einsum(
-                {"ji,jk,kl->il": ("+-",) * 4},
-                mo_coeff_vir_ints,
-                fock,
-                mo_coeff_vir_ints,
-                validate=False,
-            )
-
-            _, eigvec_fock = ElectronicIntegrals.apply(
-                np.linalg.eigh, einsummed, multi=True, validate=False
-            )
-
-            mo_coeff_vir_ints = ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3},
-                mo_coeff_vir_ints,
-                eigvec_fock,
-                validate=False,
-            )
+        mo_coeff_vir_ints = self._orthogonalize(mo_coeff_vir_ints, mo_coeff_projected, fock)
 
         logger.info("nocc_a_alpha %s", nocc_a_alpha)
         logger.info("nocc_a_beta %s", nocc_a_beta)
@@ -688,6 +631,66 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
         return fock, density_a, fragment_a
+
+    def _orthogonalize(self, mo_coeff_vir_ints, mo_coeff_projected, fock):
+        if (
+            np.linalg.norm(mo_coeff_projected.alpha["+-"]) < 1e-05
+            and np.linalg.norm(mo_coeff_projected.beta["+-"]) < 1e-05
+        ):
+            logger.info("occupied and unoccupied are orthogonal")
+            return mo_coeff_vir_ints
+
+        logger.info("occupied and unoccupied are NOT orthogonal")
+
+        # orthogonalization procedure
+        # method related to projected atomic orbitals (PAOs)
+        # P. Pulay, Chem. Phys. Lett. 100, 151 (1983).
+        mo_coeff_vir_projected = mo_coeff_vir_ints - mo_coeff_projected
+
+        einsummed = ElectronicIntegrals.einsum(
+            {"ji,jk,kl->il": ("+-",) * 4},
+            mo_coeff_vir_projected,
+            self.overlap,
+            mo_coeff_vir_projected,
+            validate=False,
+        )
+
+        eigval, eigvec = ElectronicIntegrals.apply(
+            np.linalg.eigh, einsummed, multi=True, validate=False
+        )
+        eigval = ElectronicIntegrals.apply(
+            lambda arr: np.linalg.inv(np.diag(np.sqrt(arr))), eigval, validate=False
+        )
+
+        mo_coeff_vir_ints = ElectronicIntegrals.einsum(
+            {"ij,jk,kl->il": ("+-",) * 4},
+            mo_coeff_vir_projected,
+            eigvec,
+            eigval,
+            validate=False,
+        )
+
+        einsummed = ElectronicIntegrals.einsum(
+            {"ji,jk,kl->il": ("+-",) * 4},
+            mo_coeff_vir_ints,
+            fock,
+            mo_coeff_vir_ints,
+            validate=False,
+        )
+
+        _, eigvec_fock = ElectronicIntegrals.apply(
+            np.linalg.eigh, einsummed, multi=True, validate=False
+        )
+
+        mo_coeff_vir_ints = ElectronicIntegrals.einsum(
+            {"ij,jk->ik": ("+-",) * 3},
+            mo_coeff_vir_ints,
+            eigvec_fock,
+            validate=False,
+        )
+
+        return mo_coeff_vir_ints
+
 
     def _fock_build_a(self, density_a: ElectronicDensity, density_b: ElectronicDensity):
         density_tot = density_a + density_b
