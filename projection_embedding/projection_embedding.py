@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from functools import partial
-from typing import cast
+from typing import Callable, cast
 
 import numpy as np
 import scipy.linalg as la
@@ -34,6 +34,22 @@ from qiskit_nature.second_q.properties import (
 from qiskit_nature.second_q.transformers import BaseTransformer, BasisTransformer
 
 logger = logging.getLogger(__name__)
+
+
+def _split_elec_ints_per_spin(
+    integrals: ElectronicIntegrals,
+    splitting_func: Callable,
+    alpha_indices: int | Sequence[int],
+    beta_indices: int | Sequence[int],
+) -> tuple[ElectronicIntegrals, ElectronicIntegrals]:
+    left_a, right_a = integrals.alpha.split(splitting_func, alpha_indices, validate=False)
+    left_b, right_b = None, None
+    if not integrals.beta.is_empty():
+        left_b, right_b = integrals.beta.split(splitting_func, beta_indices, validate=False)
+    return (
+        ElectronicIntegrals(left_a, left_b, validate=False),
+        ElectronicIntegrals(right_a, right_b, validate=False),
+    )
 
 
 class ProjectionEmbedding(BaseTransformer):
@@ -138,28 +154,16 @@ class ProjectionEmbedding(BaseTransformer):
             nocc_a_beta = self.num_electrons // 2
             nocc_a_alpha = self.num_electrons - nocc_a_beta
 
-        nao = self.basis_transformer.coefficients.alpha.register_length
+        nao = self.basis_transformer.coefficients.register_length
         nocc_b_alpha = problem.num_alpha - nocc_a_alpha
         nocc_b_beta = problem.num_beta - nocc_a_beta
 
-        (
-            mo_coeff_occ_ints_alpha,
-            mo_coeff_vir_ints_alpha,
-        ) = self.basis_transformer.coefficients.alpha.split(
-            np.hsplit, [nocc_a_alpha + nocc_b_alpha], validate=False
+        mo_coeff_occ_ints, mo_coeff_vir_ints = _split_elec_ints_per_spin(
+            self.basis_transformer.coefficients,
+            np.hsplit,
+            [nocc_a_alpha + nocc_b_alpha],
+            [nocc_a_beta + nocc_b_beta],
         )
-
-        mo_coeff_occ_ints_b, mo_coeff_vir_ints_b = None, None
-        if not self.basis_transformer.coefficients.beta.is_empty():
-            (
-                mo_coeff_occ_ints_b,
-                mo_coeff_vir_ints_b,
-            ) = self.basis_transformer.coefficients.beta.split(
-                np.hsplit, [nocc_a_beta + nocc_b_beta], validate=False
-            )
-
-        mo_coeff_occ_ints = ElectronicIntegrals(mo_coeff_occ_ints_alpha, mo_coeff_occ_ints_b)
-        mo_coeff_vir_ints = ElectronicIntegrals(mo_coeff_vir_ints_alpha, mo_coeff_vir_ints_b)
 
         # TODO: make localization method configurable
         fragment_a, fragment_b = self._spade_partition(
@@ -225,14 +229,12 @@ class ProjectionEmbedding(BaseTransformer):
                 la.eigh, fock, self.overlap, multi=True, validate=False
             )
 
-            fragment_a_alpha, _ = mo_coeff_a_full.alpha.split(
-                np.hsplit, [nocc_a_alpha], validate=False
+            fragment_a, _ = _split_elec_ints_per_spin(
+                mo_coeff_a_full,
+                np.hsplit,
+                [nocc_a_alpha],
+                [nocc_a_beta],
             )
-            fragment_a_beta, _ = mo_coeff_a_full.beta.split(
-                np.hsplit, [nocc_a_beta], validate=False
-            )
-
-            fragment_a = ElectronicIntegrals(fragment_a_alpha, fragment_a_beta)
 
             density_a = ElectronicDensity.einsum({"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a)
 
@@ -464,21 +466,16 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("nocc_a_delta %s", nocc_a_delta)
         logger.info("new nvir_a_alpha %s", nvir_a_alpha)
 
-        mo_coeff_vir_a_alpha, mo_coeff_vir_b_alpha = mo_coeff_vir_pb.alpha.split(
-            np.hsplit, [nvir_a_alpha], validate=False
-        )
-
-        mo_coeff_vir_a_beta, mo_coeff_vir_b_beta = None, None
         if "+-" in mo_coeff_vir_pb.beta:
             nocc_a_alpha = fragment_a.alpha["+-"].shape[1]
             nocc_a_beta = fragment_a.beta["+-"].shape[1]
 
-            mo_coeff_vir_a_beta, mo_coeff_vir_b_beta = mo_coeff_vir_pb.beta.split(
-                np.hsplit, [nvir_a_beta], validate=False
-            )
-
-        mo_coeff_vir_a = ElectronicIntegrals(mo_coeff_vir_a_alpha, mo_coeff_vir_a_beta)
-        mo_coeff_vir_b = ElectronicIntegrals(mo_coeff_vir_b_alpha, mo_coeff_vir_b_beta)
+        mo_coeff_vir_a, mo_coeff_vir_b = _split_elec_ints_per_spin(
+            mo_coeff_vir_pb,
+            np.hsplit,
+            [nvir_a_alpha],
+            [nvir_a_beta],
+        )
 
         logger.info("mo_coeff_vir_a.alpha.shape %s", mo_coeff_vir_a.alpha["+-"].shape)
         logger.info("mo_coeff_vir_a.beta.shape %s", mo_coeff_vir_a.beta["+-"].shape)
@@ -693,12 +690,7 @@ class ProjectionEmbedding(BaseTransformer):
         rot_t = ElectronicIntegrals.apply(np.transpose, rot, validate=False)
 
         nocc_a_alpha, nocc_a_beta = nocc_a
-        left_a, right_a = rot_t.alpha.split(np.hsplit, [nocc_a_alpha], validate=False)
-        left_b, right_b = None, None
-        if not rot_t.beta.is_empty():
-            left_b, right_b = rot_t.beta.split(np.hsplit, [nocc_a_beta], validate=False)
-        left = ElectronicIntegrals(left_a, left_b, validate=False)
-        right = ElectronicIntegrals(right_a, right_b, validate=False)
+        left, right = _split_elec_ints_per_spin(rot_t, np.hsplit, [nocc_a_alpha], [nocc_a_beta])
 
         return (
             ElectronicIntegrals.einsum(
