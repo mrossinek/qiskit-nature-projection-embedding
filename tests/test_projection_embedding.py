@@ -10,7 +10,7 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-"""Tests for the ProjectionTransformer."""
+"""Tests for the ProjectionEmbedding."""
 
 import unittest
 from functools import partial
@@ -25,15 +25,15 @@ from qiskit_nature.second_q.formats.qcschema_translator import (
 )
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
-from projection_embedding.projection_embedding import ProjectionTransformer
+from projection_embedding.projection_embedding import ProjectionEmbedding
 
 
-class TestProjectionTransformer(unittest.TestCase):
-    """ProjectionTransformer tests."""
+class TestProjectionEmbedding(unittest.TestCase):
+    """ProjectionEmbedding tests."""
 
     @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
     def test_full_run(self):
-        """Tests a full run through of the transformer."""
+        """Tests a full run through of the embedding."""
         driver = PySCFDriver(
             atom="""H -1.9237 0.3850 0.0000;
                 O -1.1867 -0.2472 0.0000;
@@ -49,16 +49,16 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(2, 1, basis_trafo, driver._calc.get_ovlp())
+        trafo = ProjectionEmbedding(2, 1, basis_trafo, driver._calc.get_ovlp())
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 2.38098439,
                 places=5,
             )
@@ -90,16 +90,16 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(2, 1, basis_trafo, driver._calc.get_ovlp())
+        trafo = ProjectionEmbedding(2, 1, basis_trafo, driver._calc.get_ovlp())
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 2.380961985,
                 places=5,
             )
@@ -120,16 +120,16 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(4, 5, basis_trafo, driver._calc.get_ovlp(), 4, 4)
+        trafo = ProjectionEmbedding(4, 5, basis_trafo, driver._calc.get_ovlp(), 4, 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 41.108056563,
                 places=5,
             )
@@ -154,16 +154,16 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer((4, 2), 5, basis_trafo, driver._calc.get_ovlp())
+        trafo = ProjectionEmbedding((4, 2), 5, basis_trafo, driver._calc.get_ovlp())
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 62.082773142,
                 places=5,
             )
@@ -198,7 +198,7 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(
+        trafo = ProjectionEmbedding(
             14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
         )
         problem = trafo.transform(problem)
@@ -206,10 +206,10 @@ class TestProjectionTransformer(unittest.TestCase):
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 5.822567531,
                 places=5,
             )
@@ -247,7 +247,7 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(
+        trafo = ProjectionEmbedding(
             (8, 6), 28, basis_trafo, driver._calc.get_ovlp(), (3, 1), 4
         )
         problem = trafo.transform(problem)
@@ -255,10 +255,10 @@ class TestProjectionTransformer(unittest.TestCase):
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 5.366528176,
                 places=5,
             )
@@ -296,7 +296,7 @@ class TestProjectionTransformer(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(
+        trafo = ProjectionEmbedding(
             14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
         )
 
@@ -332,10 +332,10 @@ class TestProjectionTransformer(unittest.TestCase):
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 5.8052028,
                 places=5,
             )
@@ -374,7 +374,7 @@ class TestProjectionTransformer(unittest.TestCase):
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         print(problem.reference_energy)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionTransformer(
+        trafo = ProjectionEmbedding(
             14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
         )
 
@@ -455,10 +455,10 @@ class TestProjectionTransformer(unittest.TestCase):
         with self.subTest("energy shifts"):
             self.assertEqual(
                 problem.hamiltonian.constants.keys(),
-                {"nuclear_repulsion_energy", "ProjectionTransformer"},
+                {"nuclear_repulsion_energy", "ProjectionEmbedding"},
             )
             self.assertAlmostEqual(
-                problem.hamiltonian.constants["ProjectionTransformer"],
+                problem.hamiltonian.constants["ProjectionEmbedding"],
                 5.797826,
                 places=3,
             )

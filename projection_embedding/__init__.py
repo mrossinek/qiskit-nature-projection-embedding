@@ -1,3 +1,3 @@
-"""This module provides the `ProjectionEmbedding` transformer."""
+"""This module provides the `ProjectionEmbedding`."""
 
-from .projection_embedding import ProjectionTransformer as ProjectionTransformer
+from .projection_embedding import ProjectionEmbedding as ProjectionEmbedding

@@ -10,7 +10,7 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-"""The Projection Embedding transformer."""
+"""The Projection Embedding."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from qiskit_nature.second_q.transformers import BaseTransformer, BasisTransforme
 logger = logging.getLogger(__name__)
 
 
-class ProjectionTransformer(BaseTransformer):
+class ProjectionEmbedding(BaseTransformer):
     """TODO."""
 
     def __init__(
@@ -76,7 +76,7 @@ class ProjectionTransformer(BaseTransformer):
             return self._transform_electronic_structure_problem(problem)
         else:
             raise NotImplementedError(
-                f"The problem of type, {type(problem)}, is not supported by this transformer."
+                f"The problem of type, {type(problem)}, is not supported by this embedding."
             )
 
     def transform_hamiltonian(self, hamiltonian: Hamiltonian) -> Hamiltonian:
@@ -86,7 +86,7 @@ class ProjectionTransformer(BaseTransformer):
         else:
             raise NotImplementedError(
                 f"The hamiltonian of type, {type(hamiltonian)}, is not supported by this "
-                "transformer."
+                "embedding."
             )
 
     def _transform_electronic_structure_problem(
@@ -107,6 +107,7 @@ class ProjectionTransformer(BaseTransformer):
         # TODO: hamiltonian.fock does not work as expected for unrestricted spin systems because the
         # hamiltonian is in the AO basis and, thus, has no beta or beta_alpha 2-body terms
         # associated with it yet...
+        # NOTE: this will be fixed by https://github.com/qiskit-community/qiskit-nature/pull/1216
         if not self.basis_transformer.coefficients.beta.is_empty():
             self.hamiltonian.electronic_integrals.beta = self.hamiltonian.electronic_integrals.alpha
             self.hamiltonian.electronic_integrals.beta_alpha = (
@@ -587,7 +588,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("Final RHF A eff Energy tot    : %.14f [Eh]", e_new_a_only + e_nuc)
 
         new_hamiltonian.nuclear_repulsion_energy = float(e_new_a)
-        new_hamiltonian.constants["ProjectionTransformer"] = -1.0 * float(e_new_a_only)
+        new_hamiltonian.constants["ProjectionEmbedding"] = -1.0 * float(e_new_a_only)
 
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = (
@@ -637,7 +638,7 @@ class ProjectionTransformer(BaseTransformer):
 
     def _spade_partition(
         self,
-        overlap: np.ndarray,
+        overlap: ElectronicIntegrals,
         mo_coeff_occ: ElectronicIntegrals,
         num_bf: int,
         nocc_a: tuple[int, int],
