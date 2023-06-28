@@ -200,7 +200,6 @@ class ProjectionEmbedding(BaseTransformer):
             density_b.beta = density_b.alpha
 
         fock, e_low_level = self._fock_build_a(density_a, density_b)
-        logger.debug("e_low_level %s", e_low_level)
 
         e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
@@ -216,7 +215,6 @@ class ProjectionEmbedding(BaseTransformer):
             + e_low_level
             + self.hamiltonian.nuclear_repulsion_energy
         )
-        logger.debug("e_new_a %s", e_new_a)
 
         identity = ElectronicIntegrals.from_raw_integrals(
             np.identity(nao),
@@ -257,11 +255,6 @@ class ProjectionEmbedding(BaseTransformer):
 
         mo_coeff_vir_ints = self._orthogonalize(mo_coeff_vir_ints, mo_coeff_projected, fock)
 
-        logger.info("nocc_a_alpha %s", nocc_a_alpha)
-        logger.info("nocc_a_beta %s", nocc_a_beta)
-        logger.info("nocc_b_alpha %s", nocc_b_alpha)
-        logger.info("nocc_b_beta %s", nocc_b_beta)
-
         # doing concentric local virtuals
         (
             mo_coeff_vir_pb,
@@ -279,11 +272,6 @@ class ProjectionEmbedding(BaseTransformer):
             fock,
         )
 
-        logger.info("nvir_a_alpha %s", nvir_a_alpha)
-        logger.info("nvir_a_beta %s", nvir_a_beta)
-        logger.info("nvir_b_alpha %s", nvir_b_alpha)
-        logger.info("nvir_b_beta %s", nvir_b_beta)
-
         # NOTE: we need to correct the number of virtual alpha-spin orbitals in fragment A to take a
         # potential number of unpaired electrons into account
         nocc_a_delta = nocc_a_alpha - nocc_a_beta
@@ -291,9 +279,6 @@ class ProjectionEmbedding(BaseTransformer):
             nvir_a_alpha -= nocc_a_delta
         else:
             nvir_a_beta += nocc_a_delta
-
-        logger.info("nocc_a_delta %s", nocc_a_delta)
-        logger.info("new nvir_a_alpha %s", nvir_a_alpha)
 
         if "+-" in mo_coeff_vir_pb.beta:
             nocc_a_alpha = fragment_a.alpha["+-"].shape[1]
@@ -306,11 +291,6 @@ class ProjectionEmbedding(BaseTransformer):
             [nvir_a_beta],
         )
 
-        logger.info("mo_coeff_vir_a.alpha.shape %s", mo_coeff_vir_a.alpha["+-"].shape)
-        logger.info("mo_coeff_vir_a.beta.shape %s", mo_coeff_vir_a.beta["+-"].shape)
-        logger.info("mo_coeff_vir_b.alpha.shape %s", mo_coeff_vir_b.alpha["+-"].shape)
-        logger.info("mo_coeff_vir_b.beta.shape %s", mo_coeff_vir_b.beta["+-"].shape)
-
         # P^B in Manby2012
         proj_excluded_virts = ElectronicIntegrals.einsum(
             {"ij,jk,lk,lm->im": ("+-",) * 5},
@@ -321,9 +301,6 @@ class ProjectionEmbedding(BaseTransformer):
             validate=False,
         )
         fock += mu * proj_excluded_virts
-
-        logger.info("fragment_a.alpha.shape %s", fragment_a.alpha["+-"].shape)
-        logger.info("fragment_a.beta.shape %s", fragment_a.beta["+-"].shape)
 
         mo_coeff_final = ElectronicIntegrals.stack(
             np.hstack,
@@ -346,13 +323,7 @@ class ProjectionEmbedding(BaseTransformer):
                 np.hsplit, [min_orb, max_orb], validate=False
             )
 
-        logger.info("mo_coeff_final.alpha.shape %s", mo_coeff_final.alpha["+-"].shape)
-        logger.info("mo_coeff_final.beta.shape %s", mo_coeff_final.beta["+-"].shape)
-
         nmo_a = mo_coeff_final.alpha["+-"].shape[1]
-
-        logger.info("nmo_a %s", nmo_a)
-        logger.info("nmo_b %s", mo_coeff_final.beta["+-"].shape[1])
 
         if "+-" in mo_coeff_final.beta:
             nmo_b = mo_coeff_final.beta["+-"].shape[1]
@@ -366,9 +337,6 @@ class ProjectionEmbedding(BaseTransformer):
         if self.num_frozen_occupied_orbitals is not None:
             nocc_a_alpha -= self.num_frozen_occupied_orbitals
             nocc_a_beta -= self.num_frozen_occupied_orbitals
-
-        logger.info("new nocc_a_alpha %s", nocc_a_alpha)
-        logger.info("new nocc_a_beta %s", nocc_a_beta)
 
         # NOTE: at this point fock =  (omitting pre-factors for Coulomb to be RKS/UKS-agnostic)
         #   h_core + J_A - K_A
@@ -505,7 +473,6 @@ class ProjectionEmbedding(BaseTransformer):
             )
 
             fock, e_low_level = self._fock_build_a(density_a, density_b)
-            logger.debug("e_low_level %s", e_low_level)
 
             projector = identity - ElectronicIntegrals.einsum(
                 {"ij,jk->ik": ("+-",) * 3}, self.overlap, density_b
@@ -548,14 +515,14 @@ class ProjectionEmbedding(BaseTransformer):
             diis_error.append(diis_e)
             dRMS_a = np.mean(diis_e.one_body.alpha["+-"] ** 2) ** 0.5
             dRMS_b = np.mean(diis_e.one_body.beta["+-"] ** 2) ** 0.5
-            logger.debug("dRMS_a %s", dRMS_a)
-            logger.debug("dRMS_b %s", dRMS_b)
 
             logger.info(
-                "SCF Iteration %s: Energy = %s dE = %s",
+                "SCF Iteration %s: Energy = %s dE = %s dRMS = %s %s",
                 scf_iter,
                 e_new_a,
                 e_new_a - e_old,
+                dRMS_a,
+                dRMS_b,
             )
 
             # SCF Converged?
