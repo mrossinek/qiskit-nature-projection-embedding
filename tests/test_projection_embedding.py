@@ -271,6 +271,7 @@ class TestProjectionTransformer(unittest.TestCase):
             self.assertEqual(problem.num_alpha, 3)
             self.assertEqual(problem.num_beta, 1)
 
+    @slow_test
     @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
     def test_larger_system_dft(self):
         """Tests a full run on a larger system."""
@@ -347,6 +348,7 @@ class TestProjectionTransformer(unittest.TestCase):
             self.assertEqual(problem.num_alpha, 2)
             self.assertEqual(problem.num_beta, 2)
 
+    @slow_test
     @unittest.skipIf(not _optionals.HAS_PYSCF, "pyscf not available.")
     def test_larger_system_dft_pm(self):
         """Tests a full run on a larger system."""
