@@ -65,9 +65,10 @@ class ProjectionEmbedding(BaseTransformer):
 
     def __init__(
         self,
-        num_electrons: int
-        | tuple[int, int],  # the number of electrons in the "active" subsystem A
-        num_basis_functions: int,  # the number of basis functions in the "active" subsystem A
+        # the number of electrons in the "active" subsystem A
+        num_electrons: int | tuple[int, int],
+        # the number of basis functions in the "active" subsystem A
+        num_basis_functions: int,
         basis_transformer: BasisTransformer,
         overlap_matrix: np.ndarray,
         num_active_electrons: int | tuple[int, int] | None = None,
@@ -208,12 +209,14 @@ class ProjectionEmbedding(BaseTransformer):
             density_a,
         )
 
+        e_nuc = self.hamiltonian.nuclear_repulsion_energy
+
         e_new_a = (
             e_new_a_ints.alpha.get("", 0.0)
             + e_new_a_ints.beta.get("", 0.0)
             + e_new_a_ints.beta_alpha.get("", 0.0)
             + e_low_level
-            + self.hamiltonian.nuclear_repulsion_energy
+            + e_nuc
         )
 
         identity = ElectronicIntegrals.from_raw_integrals(
@@ -229,8 +232,6 @@ class ProjectionEmbedding(BaseTransformer):
 
         logger.info("")
         logger.info(" Hartree-Fock for subsystem A Energy")
-
-        e_nuc = self.hamiltonian.nuclear_repulsion_energy
 
         fock, density_a, fragment_a = self._run_scf_in_scf(
             fock, nocc_a_alpha, nocc_a_beta, density_a, density_b, identity, projector
@@ -253,7 +254,9 @@ class ProjectionEmbedding(BaseTransformer):
             validate=False,
         )
 
-        mo_coeff_vir_ints = self._orthogonalize(mo_coeff_vir_ints, mo_coeff_projected, fock)
+        mo_coeff_vir_ints = self._orthogonalize(
+            mo_coeff_vir_ints, mo_coeff_projected, fock
+        )
 
         # doing concentric local virtuals
         (
@@ -285,10 +288,7 @@ class ProjectionEmbedding(BaseTransformer):
             nocc_a_beta = fragment_a.beta["+-"].shape[1]
 
         mo_coeff_vir_a, mo_coeff_vir_b = _split_elec_ints_per_spin(
-            mo_coeff_vir_pb,
-            np.hsplit,
-            [nvir_a_alpha],
-            [nvir_a_beta],
+            mo_coeff_vir_pb, np.hsplit, [nvir_a_alpha], [nvir_a_beta]
         )
 
         # P^B in Manby2012
@@ -303,9 +303,7 @@ class ProjectionEmbedding(BaseTransformer):
         fock += mu * proj_excluded_virts
 
         mo_coeff_final = ElectronicIntegrals.stack(
-            np.hstack,
-            (fragment_a, mo_coeff_vir_a),
-            validate=False,
+            np.hstack, (fragment_a, mo_coeff_vir_a), validate=False
         )
 
         do_split = False
@@ -419,10 +417,7 @@ class ProjectionEmbedding(BaseTransformer):
         new_hamiltonian.constants["ProjectionEmbedding"] = -1.0 * float(e_new_a_only)
 
         result = ElectronicStructureProblem(new_hamiltonian)
-        result.num_particles = (
-            nocc_a_alpha,
-            nocc_a_beta,
-        )
+        result.num_particles = (nocc_a_alpha, nocc_a_beta)
         result.num_spatial_orbitals = nmo_a
         result.orbital_energy = np.diag(orbital_energy.alpha["+-"])
         if not orbital_energy.beta.is_empty():
@@ -439,14 +434,7 @@ class ProjectionEmbedding(BaseTransformer):
         return result
 
     def _run_scf_in_scf(
-        self,
-        fock,
-        nocc_a_alpha,
-        nocc_a_beta,
-        density_a,
-        density_b,
-        identity,
-        projector,
+        self, fock, nocc_a_alpha, nocc_a_beta, density_a, density_b, identity, projector
     ):
         e_old = 0
         # TODO: make these configurable
@@ -462,10 +450,7 @@ class ProjectionEmbedding(BaseTransformer):
             )
 
             fragment_a, _ = _split_elec_ints_per_spin(
-                mo_coeff_a_full,
-                np.hsplit,
-                [nocc_a_alpha],
-                [nocc_a_beta],
+                mo_coeff_a_full, np.hsplit, [nocc_a_alpha], [nocc_a_beta]
             )
 
             density_a = ElectronicDensity.einsum(
@@ -497,18 +482,12 @@ class ProjectionEmbedding(BaseTransformer):
             )
 
             diis_e = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-                fock,
-                density_a,
-                self.overlap,
+                {"ij,jk,kl->il": ("+-",) * 4}, fock, density_a, self.overlap
             ) - ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-                self.overlap,
-                density_a,
-                fock,
+                {"ij,jk,kl->il": ("+-",) * 4}, self.overlap, density_a, fock
             )
             diis_e = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")}, projector, diis_e, projector
+                {"ij,jk,kl->il": ("+-",) * 4}, projector, diis_e, projector
             )
 
             fock_list.append(fock)
@@ -650,14 +629,10 @@ class ProjectionEmbedding(BaseTransformer):
         )
 
         mo_coeff_vir_ints = ElectronicIntegrals.einsum(
-            {"ij,jk->ik": ("+-",) * 3},
-            mo_coeff_vir_ints,
-            eigvec_fock,
-            validate=False,
+            {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_ints, eigvec_fock, validate=False
         )
 
         return mo_coeff_vir_ints
-
 
     def _fock_build_a(self, density_a: ElectronicDensity, density_b: ElectronicDensity):
         density_tot = density_a + density_b
@@ -668,14 +643,10 @@ class ProjectionEmbedding(BaseTransformer):
         fock_tot = self.hamiltonian.fock(density_tot)
 
         e_low_level = 0.5 * ElectronicIntegrals.einsum(
-            {"ij,ij": ("+-", "+-", "")},
-            fock_tot + h_core,
-            density_tot,
+            {"ij,ij": ("+-", "+-", "")}, fock_tot + h_core, density_tot
         )
         e_low_level -= 0.5 * ElectronicIntegrals.einsum(
-            {"ij,ij": ("+-", "+-", "")},
-            fock_a + h_core,
-            density_a,
+            {"ij,ij": ("+-", "+-", "")}, fock_a + h_core, density_a
         )
 
         fock_final = self.hamiltonian.fock(density_a)
@@ -841,9 +812,7 @@ def _concentric_localization(
             )
 
         mo_coeff_vir_new = ElectronicIntegrals.stack(
-            np.hstack,
-            (mo_coeff_vir_new, mo_coeff_vir_cur),
-            validate=False,
+            np.hstack, (mo_coeff_vir_new, mo_coeff_vir_cur), validate=False
         )
 
     # post-processing step
