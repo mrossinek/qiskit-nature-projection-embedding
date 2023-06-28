@@ -73,9 +73,14 @@ class ProjectionEmbedding(BaseTransformer):
     def transform(self, problem: BaseProblem) -> BaseProblem:
         """TODO."""
         if isinstance(problem, ElectronicStructureProblem):
+            if problem.basis != ElectronicBasis.AO:
+                raise ValueError(
+                    f"The problem description must be in the AO basis, not {problem.basis.value}."
+                )
+
             return self._transform_electronic_structure_problem(problem)
         else:
-            raise NotImplementedError(
+            raise TypeError(
                 f"The problem of type, {type(problem)}, is not supported by this embedding."
             )
 
@@ -84,7 +89,7 @@ class ProjectionEmbedding(BaseTransformer):
         if isinstance(hamiltonian, ElectronicEnergy):
             pass
         else:
-            raise NotImplementedError(
+            raise TypeError(
                 f"The hamiltonian of type, {type(hamiltonian)}, is not supported by this "
                 "embedding."
             )
@@ -100,8 +105,6 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("Starting with embedding calculation")
         logger.info("Doing SCF-in-SCF embedding calculation")
         logger.info("")
-
-        # TODO: assert AO basis
 
         self.hamiltonian = problem.hamiltonian
         # TODO: hamiltonian.fock does not work as expected for unrestricted spin systems because the
@@ -510,8 +513,14 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("nmo_a %s", nmo_a)
         logger.info("nmo_b %s", mo_coeff_final.beta["+-"].shape[1])
 
-        if "+-" in mo_coeff_final.beta and nmo_a != mo_coeff_final.beta["+-"].shape[1]:
-            raise NotImplementedError("TODO.")
+        if "+-" in mo_coeff_final.beta:
+            nmo_b = mo_coeff_final.beta["+-"].shape[1]
+            if nmo_a != nmo_b:
+                raise RuntimeError(
+                    "The projection embedding resulted in differing numbers of alpha- and beta-spin"
+                    f" orbitals: {nmo_a} and {nmo_b}. This scenario is not supported! Please check "
+                    "your configuration settings for consistency."
+                )
 
         if self.num_frozen_occupied_orbitals is not None:
             nocc_a_alpha -= self.num_frozen_occupied_orbitals
