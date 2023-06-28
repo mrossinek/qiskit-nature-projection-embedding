@@ -49,7 +49,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(2, 1, basis_trafo, driver._calc.get_ovlp())
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding(2, 1, basis_trafo, overlap)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -90,7 +92,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(2, 1, basis_trafo, driver._calc.get_ovlp())
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding(2, 1, basis_trafo, overlap)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -120,7 +124,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(4, 5, basis_trafo, driver._calc.get_ovlp(), 4, 4)
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding(4, 5, basis_trafo, overlap, 4, 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -154,7 +160,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding((4, 2), 5, basis_trafo, driver._calc.get_ovlp())
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding((4, 2), 5, basis_trafo, overlap)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -198,9 +206,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(
-            14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
-        )
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding(14, 10, basis_trafo, overlap, 4, 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -247,9 +255,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(
-            (8, 6), 28, basis_trafo, driver._calc.get_ovlp(), (3, 1), 4
-        )
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding((8, 6), 28, basis_trafo, overlap, (3, 1), 4)
         problem = trafo.transform(problem)
 
         with self.subTest("energy shifts"):
@@ -296,9 +304,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(
-            14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
-        )
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding(14, 10, basis_trafo, overlap, 4, 4)
 
         def _fock_build_a(trafo, density_a, density_b):
             density_tot = density_a + density_b
@@ -374,9 +382,9 @@ class TestProjectionEmbedding(unittest.TestCase):
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
         print(problem.reference_energy)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
-        trafo = ProjectionEmbedding(
-            14, 10, basis_trafo, driver._calc.get_ovlp(), 4, 4
-        )
+        overlap = driver._calc.get_ovlp()
+        overlap[np.abs(overlap) < 1e-12] = 0.0
+        trafo = ProjectionEmbedding(14, 10, basis_trafo, overlap, 4, 4)
 
         def _pipek_mezey(trafo, overlap, mo_coeff_occ, num_bf, nocc_a):
             from pyscf.lo import PipekMezey

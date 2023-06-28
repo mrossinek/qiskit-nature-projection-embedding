@@ -82,8 +82,6 @@ class ProjectionEmbedding(BaseTransformer):
                 self.num_frozen_occupied_orbitals = num_frozen_alpha
 
         self.basis_transformer = basis_transformer
-
-        overlap_matrix[np.abs(overlap_matrix) < 1e-12] = 0.0
         self.overlap = ElectronicIntegrals.from_raw_integrals(overlap_matrix)
 
 
