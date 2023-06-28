@@ -67,7 +67,7 @@ class ProjectionTransformer(BaseTransformer):
         self.basis_transformer = basis_transformer
 
         overlap_matrix[np.abs(overlap_matrix) < 1e-12] = 0.0
-        self.overlap_matrix = overlap_matrix
+        self.overlap = ElectronicIntegrals.from_raw_integrals(overlap_matrix)
 
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
@@ -144,14 +144,11 @@ class ProjectionTransformer(BaseTransformer):
 
         # TODO: make localization method configurable
         fragment_a, fragment_b = self._spade_partition(
-            self.overlap_matrix,
+            self.overlap,
             mo_coeff_occ_ints,
             self.num_basis_functions,
             (nocc_a_alpha, nocc_a_beta),
         )
-
-        # NOTE: now we wrap the overlap matrix into ElectronicIntegrals to simplify handling later
-        overlap = ElectronicIntegrals.from_raw_integrals(self.overlap_matrix)
 
         # NOTE: fragment_a will ONLY change if the SCF loop below is necessary to ensure consistent
         # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
@@ -185,7 +182,7 @@ class ProjectionTransformer(BaseTransformer):
             np.identity(nao), h1_b=None if density_b.beta.is_empty() else np.identity(nao)
         )
         projector = identity - ElectronicIntegrals.einsum(
-            {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
+            {"ij,jk->ik": ("+-",) * 3}, self.overlap, density_b
         )
         fock = ElectronicIntegrals.einsum({"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector)
 
@@ -206,7 +203,7 @@ class ProjectionTransformer(BaseTransformer):
         for scf_iter in range(1, max_iter + 1):
 
             _, mo_coeff_a_full = ElectronicIntegrals.apply(
-                la.eigh, fock, overlap, multi=True, validate=False
+                la.eigh, fock, self.overlap, multi=True, validate=False
             )
 
             fragment_a_alpha, _ = mo_coeff_a_full.alpha.split(
@@ -224,7 +221,7 @@ class ProjectionTransformer(BaseTransformer):
             logger.debug("e_low_level %s", e_low_level)
 
             projector = identity - ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3}, overlap, density_b
+                {"ij,jk->ik": ("+-",) * 3}, self.overlap, density_b
             )
             fock = ElectronicIntegrals.einsum(
                 {"ij,jk,lk->il": ("+-",) * 4}, projector, fock, projector
@@ -248,10 +245,10 @@ class ProjectionTransformer(BaseTransformer):
                 {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
                 fock,
                 density_a,
-                overlap,
+                self.overlap,
             ) - ElectronicIntegrals.einsum(
                 {"ij,jk,kl->il": ("+-", "+-", "+-", "+-")},
-                overlap,
+                self.overlap,
                 density_a,
                 fock,
             )
@@ -344,14 +341,14 @@ class ProjectionTransformer(BaseTransformer):
 
         mu = 1.0e8
         fock -= mu * ElectronicIntegrals.einsum(
-            {"ij,jk,kl->il": ("+-",) * 4}, overlap, density_b, overlap
+            {"ij,jk,kl->il": ("+-",) * 4}, self.overlap, density_b, self.overlap
         )
 
         density_full = density_a + density_b
         mo_coeff_projected = ElectronicIntegrals.einsum(
             {"ij,jk,kl->il": ("+-",) * 4},
             density_full,
-            overlap,
+            self.overlap,
             mo_coeff_vir_ints,
             validate=False,
         )
@@ -376,7 +373,7 @@ class ProjectionTransformer(BaseTransformer):
             einsummed = ElectronicIntegrals.einsum(
                 {"ji,jk,kl->il": ("+-",) * 4},
                 mo_coeff_vir_projected,
-                overlap,
+                self.overlap,
                 mo_coeff_vir_projected,
                 validate=False,
             )
@@ -423,8 +420,8 @@ class ProjectionTransformer(BaseTransformer):
             (nvir_a_alpha, nvir_a_beta),
             (nvir_b_alpha, nvir_b_beta),
         ) = _concentric_localization(
-            overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[0],
-            overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[0].split(
+            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[0],
+            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[0].split(
                 np.hsplit, [self.num_basis_functions], validate=False
             )[0],
             mo_coeff_vir_ints,
@@ -472,10 +469,10 @@ class ProjectionTransformer(BaseTransformer):
         # P^B in Manby2012
         proj_excluded_virts = ElectronicIntegrals.einsum(
             {"ij,jk,lk,lm->im": ("+-",) * 5},
-            overlap,
+            self.overlap,
             mo_coeff_vir_b,
             mo_coeff_vir_b,
-            overlap,
+            self.overlap,
             validate=False,
         )
         fock += mu * proj_excluded_virts
@@ -651,7 +648,7 @@ class ProjectionTransformer(BaseTransformer):
         logger.info("")
 
         # 1. use symmetric orthogonalization on the overlap matrix
-        symm_orth = ElectronicIntegrals.from_raw_integrals(symmetric_orthogonalization(overlap))
+        symm_orth = symmetric_orthogonalization(overlap)
 
         # 2. change the MO basis to be orthogonal and reasonably localized
         mo_coeff_tmp = ElectronicIntegrals.einsum(
@@ -852,11 +849,18 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
     return mo_coeff_vir, (nvir_a_alpha, nvir_a_beta), (nvir_b_alpha, nvir_b_beta)
 
 
-def symmetric_orthogonalization(matrix: np.ndarray) -> np.ndarray:
+def symmetric_orthogonalization(matrix: ElectronicIntegrals) -> ElectronicIntegrals:
     """Performs the symmetric orthogonalization.
 
     TODO.
     """
+    eigval, eigvec = ElectronicIntegrals.apply(
+        np.linalg.eigh, matrix, multi=True, validate=False
+    )
+    eigval = ElectronicIntegrals.apply(
+        lambda arr: np.diag(np.sqrt(arr)), eigval, validate=False
+    )
+    return ElectronicIntegrals.einsum({"ik,kj,lj->il": ("+-",) * 4}, eigvec, eigval, eigvec)
     eigvals, eigvecs = np.linalg.eigh(matrix)
     eigvals = np.diag(np.sqrt(eigvals))
     # TODO: change to allow opt_einsum

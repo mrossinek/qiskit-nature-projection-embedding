@@ -390,7 +390,7 @@ class TestProjectionTransformer(unittest.TestCase):
             for i in range(nocc):
                 col = mo[:, i]
                 dens = np.outer(col, col)
-                PS = np.dot(dens, overlap)
+                PS = np.dot(dens, overlap.alpha["+-"])
 
                 pop[i, 0] = np.trace(PS[:num_bf, :num_bf])
                 pop[i, 1] = np.trace(PS[num_bf:, num_bf:])
