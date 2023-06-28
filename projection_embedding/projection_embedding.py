@@ -53,16 +53,33 @@ class ProjectionEmbedding(BaseTransformer):
         self.num_basis_functions = num_basis_functions
 
         self.num_active_orbitals = num_active_orbitals
+        self.num_frozen_occupied_orbitals: int | None = None
 
-        if isinstance(num_active_electrons, tuple):
-            num_frozen_alpha = num_electrons[0] - num_active_electrons[0]
-            num_frozen_beta = num_electrons[1] - num_active_electrons[1]
-            assert num_frozen_alpha == num_frozen_beta
-            self.num_frozen_occupied_orbitals = num_frozen_alpha
-        elif isinstance(num_active_electrons, int):
-            self.num_frozen_occupied_orbitals = (num_electrons - num_active_electrons) // 2
-        else:
-            self.num_frozen_occupied_orbitals = None
+        if num_active_electrons is not None:
+            if type(num_active_electrons) != type(num_electrons):
+                raise TypeError(
+                    "The types of the 'num_electrons' and 'num_active_electrons' must match. "
+                    f"However, you provided types {type(num_electrons)} and "
+                    f"{type(num_active_electrons)} which are incompatible."
+                )
+
+            if isinstance(num_active_electrons, int):
+                self.num_frozen_occupied_orbitals = (num_electrons - num_active_electrons) // 2
+
+            elif isinstance(num_active_electrons, tuple):
+                num_frozen_alpha = num_electrons[0] - num_active_electrons[0]
+                num_frozen_beta = num_electrons[1] - num_active_electrons[1]
+
+                if num_frozen_alpha != num_frozen_beta:
+                    raise ValueError(
+                        "The number of frozen alpha- and beta-spin orbitals must turn out to be "
+                        "identical. Their values are computed from the difference of the total "
+                        "number of electrons in the embedded fragment and the active number of "
+                        "electrons. For your current configuration they turned out to be: "
+                        f"{num_frozen_alpha} and {num_frozen_beta}. Please correct your input!"
+                    )
+
+                self.num_frozen_occupied_orbitals = num_frozen_alpha
 
         self.basis_transformer = basis_transformer
 
