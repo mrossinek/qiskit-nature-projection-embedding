@@ -45,6 +45,7 @@ class ProjectionTransformer(BaseTransformer):
         num_electrons: int | tuple[int, int],  # the number of electrons in the "active" subsystem A
         num_basis_functions: int,  # the number of basis functions in the "active" subsystem A
         basis_transformer: BasisTransformer,
+        overlap_matrix: np.ndarray,
         num_active_electrons: int | tuple[int, int] | None = None,
         num_active_orbitals: int | None = None,
     ) -> None:
@@ -62,6 +63,9 @@ class ProjectionTransformer(BaseTransformer):
             self.num_frozen_occupied_orbitals = None
         self.num_active_orbitals = num_active_orbitals
         self.basis_transformer = basis_transformer
+        overlap_matrix[np.abs(overlap_matrix) < 1e-12] = 0.0
+        self.overlap_matrix = overlap_matrix
+
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
         """TODO."""
@@ -135,16 +139,16 @@ class ProjectionTransformer(BaseTransformer):
         mo_coeff_occ_ints = ElectronicIntegrals(mo_coeff_occ_ints_alpha, mo_coeff_occ_ints_b)
         mo_coeff_vir_ints = ElectronicIntegrals(mo_coeff_vir_ints_alpha, mo_coeff_vir_ints_b)
 
-        overlap = problem.overlap_matrix
-        overlap[np.abs(overlap) < 1e-12] = 0.0
-
         # TODO: make localization method configurable
         fragment_a, fragment_b = self._spade_partition(
-            overlap, mo_coeff_occ_ints, self.num_basis_functions, (nocc_a_alpha, nocc_a_beta)
+            self.overlap_matrix,
+            mo_coeff_occ_ints,
+            self.num_basis_functions,
+            (nocc_a_alpha, nocc_a_beta),
         )
 
         # NOTE: now we wrap the overlap matrix into ElectronicIntegrals to simplify handling later
-        overlap = ElectronicIntegrals.from_raw_integrals(overlap)
+        overlap = ElectronicIntegrals.from_raw_integrals(self.overlap_matrix)
 
         # NOTE: fragment_a will ONLY change if the SCF loop below is necessary to ensure consistent
         # embedding (which I believe to be trivial in the HF case and, thus, only occur with DFT)
