@@ -30,7 +30,6 @@ from qiskit_nature.second_q.properties import (
     Magnetization,
     ParticleNumber,
 )
-from qiskit_nature.utils import symmetric_orthogonalization
 
 from .base_transformer import BaseTransformer
 from .basis_transformer import BasisTransformer
@@ -835,3 +834,14 @@ def _concentric_localization(overlap_pb_wb, projection_basis, mo_coeff_vir, num_
         nvir_b_beta = mo_coeff_vir.beta["+-"].shape[1] - nvir_a_beta
 
     return mo_coeff_vir, (nvir_a_alpha, nvir_a_beta), (nvir_b_alpha, nvir_b_beta)
+
+
+def symmetric_orthogonalization(matrix: np.ndarray) -> np.ndarray:
+    """Performs the symmetric orthogonalization.
+
+    TODO.
+    """
+    eigvals, eigvecs = np.linalg.eigh(matrix)
+    eigvals = np.diag(np.sqrt(eigvals))
+    # TODO: change to allow opt_einsum
+    return np.einsum("ik,kj,lj->il", eigvecs, eigvals, eigvecs)
