@@ -51,17 +51,21 @@ class ProjectionTransformer(BaseTransformer):
         """TODO."""
         self.num_electrons = num_electrons
         self.num_basis_functions = num_basis_functions
-        # TODO: clean up handling of of new active space definition
-        self.num_active_electrons = num_active_electrons
-        if num_active_electrons is not None:
-            if isinstance(num_electrons, tuple):
-                self.num_frozen_occupied_orbitals = num_electrons[0] - num_active_electrons[0]
-            else:
-                self.num_frozen_occupied_orbitals = (num_electrons - num_active_electrons) // 2
+
+        self.num_active_orbitals = num_active_orbitals
+
+        if isinstance(num_active_electrons, tuple):
+            num_frozen_alpha = num_electrons[0] - num_active_electrons[0]
+            num_frozen_beta = num_electrons[1] - num_active_electrons[1]
+            assert num_frozen_alpha == num_frozen_beta
+            self.num_frozen_occupied_orbitals = num_frozen_alpha
+        elif isinstance(num_active_electrons, int):
+            self.num_frozen_occupied_orbitals = (num_electrons - num_active_electrons) // 2
         else:
             self.num_frozen_occupied_orbitals = None
-        self.num_active_orbitals = num_active_orbitals
+
         self.basis_transformer = basis_transformer
+
         overlap_matrix[np.abs(overlap_matrix) < 1e-12] = 0.0
         self.overlap_matrix = overlap_matrix
 
@@ -485,10 +489,19 @@ class ProjectionTransformer(BaseTransformer):
             validate=False,
         )
 
-        if self.num_frozen_occupied_orbitals is not None and self.num_active_orbitals is not None:
-            max_orb = self.num_frozen_occupied_orbitals + self.num_active_orbitals
+        do_split = False
+        min_orb, max_orb = None, None
+        if self.num_frozen_occupied_orbitals is not None:
+            min_orb = self.num_frozen_occupied_orbitals
+            do_split = True
+        if self.num_active_orbitals is not None:
+            if min_orb is None:
+                min_orb = 0
+            max_orb = min_orb + self.num_active_orbitals
+            do_split = True
+        if do_split:
             _, mo_coeff_final, _ = mo_coeff_final.split(
-                np.hsplit, [self.num_frozen_occupied_orbitals, max_orb], validate=False
+                np.hsplit, [min_orb, max_orb], validate=False
             )
 
         logger.info("mo_coeff_final.alpha.shape %s", mo_coeff_final.alpha["+-"].shape)
