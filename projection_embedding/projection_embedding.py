@@ -233,7 +233,7 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("")
         logger.info(" Hartree-Fock for subsystem A Energy")
 
-        fock, density_a, fragment_a = self._run_scf_in_scf(
+        fock, density_a, fragment_a, e_new_a = self._run_scf_in_scf(
             fock, nocc_a_alpha, nocc_a_beta, density_a, density_b, identity, projector
         )
 
@@ -576,7 +576,7 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("\nSCF converged.")
         logger.info("Final SCF A-in-B Energy: %s [Eh]", e_new_a)
 
-        return fock, density_a, fragment_a
+        return fock, density_a, fragment_a, e_new_a
 
     def _orthogonalize(self, mo_coeff_vir_ints, mo_coeff_projected, fock):
         if (
