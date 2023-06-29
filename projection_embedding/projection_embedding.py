@@ -37,27 +37,11 @@ from qiskit_nature.second_q.properties import (
 
 from qiskit_nature.second_q.transformers import BaseTransformer, BasisTransformer
 
+from .occupied_orbital_partitioning import OccupiedOrbitalPartitioning
+from .spade_partitioning import SPADEPartitioning
+from .utils import split_elec_ints_per_spin
+
 logger = logging.getLogger(__name__)
-
-
-def _split_elec_ints_per_spin(
-    integrals: ElectronicIntegrals,
-    splitting_func: Callable,
-    alpha_indices: int | Sequence[int],
-    beta_indices: int | Sequence[int],
-) -> tuple[ElectronicIntegrals, ElectronicIntegrals]:
-    left_a, right_a = integrals.alpha.split(
-        splitting_func, alpha_indices, validate=False
-    )
-    left_b, right_b = None, None
-    if not integrals.beta.is_empty():
-        left_b, right_b = integrals.beta.split(
-            splitting_func, beta_indices, validate=False
-        )
-    return (
-        ElectronicIntegrals(left_a, left_b, validate=False),
-        ElectronicIntegrals(right_a, right_b, validate=False),
-    )
 
 
 class ProjectionEmbedding(BaseTransformer):
@@ -73,6 +57,8 @@ class ProjectionEmbedding(BaseTransformer):
         overlap_matrix: np.ndarray,
         num_active_electrons: int | tuple[int, int] | None = None,
         num_active_orbitals: int | None = None,
+        *,
+        occupied_orbital_partitioning: OccupiedOrbitalPartitioning = SPADEPartitioning(),
     ) -> None:
         """TODO."""
         self.num_electrons = num_electrons
@@ -111,6 +97,8 @@ class ProjectionEmbedding(BaseTransformer):
 
         self.basis_transformer = basis_transformer
         self.overlap = ElectronicIntegrals.from_raw_integrals(overlap_matrix)
+
+        self.occupied_orbital_partitioning = occupied_orbital_partitioning
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
         """TODO."""
@@ -171,15 +159,14 @@ class ProjectionEmbedding(BaseTransformer):
         nocc_b_alpha = problem.num_alpha - nocc_a_alpha
         nocc_b_beta = problem.num_beta - nocc_a_beta
 
-        mo_coeff_occ_ints, mo_coeff_vir_ints = _split_elec_ints_per_spin(
+        mo_coeff_occ_ints, mo_coeff_vir_ints = split_elec_ints_per_spin(
             self.basis_transformer.coefficients,
             np.hsplit,
             [nocc_a_alpha + nocc_b_alpha],
             [nocc_a_beta + nocc_b_beta],
         )
 
-        # TODO: make localization method configurable
-        fragment_a, fragment_b = self._spade_partition(
+        fragment_a, fragment_b = self.occupied_orbital_partitioning.partition(
             self.overlap,
             mo_coeff_occ_ints,
             self.num_basis_functions,
@@ -287,7 +274,7 @@ class ProjectionEmbedding(BaseTransformer):
             nocc_a_alpha = fragment_a.alpha["+-"].shape[1]
             nocc_a_beta = fragment_a.beta["+-"].shape[1]
 
-        mo_coeff_vir_a, mo_coeff_vir_b = _split_elec_ints_per_spin(
+        mo_coeff_vir_a, mo_coeff_vir_b = split_elec_ints_per_spin(
             mo_coeff_vir_pb, np.hsplit, [nvir_a_alpha], [nvir_a_beta]
         )
 
@@ -449,7 +436,7 @@ class ProjectionEmbedding(BaseTransformer):
                 la.eigh, fock, self.overlap, multi=True, validate=False
             )
 
-            fragment_a, _ = _split_elec_ints_per_spin(
+            fragment_a, _ = split_elec_ints_per_spin(
                 mo_coeff_a_full, np.hsplit, [nocc_a_alpha], [nocc_a_beta]
             )
 
@@ -658,52 +645,6 @@ class ProjectionEmbedding(BaseTransformer):
             + e_low_level.beta_alpha.get("", 0.0)
         )
 
-    def _spade_partition(
-        self,
-        overlap: ElectronicIntegrals,
-        mo_coeff_occ: ElectronicIntegrals,
-        num_bf: int,
-        nocc_a: tuple[int, int],
-    ):
-        logger.info("")
-        logger.info("Doing SPADE partitioning")
-        logger.info("D. CLaudino and N. Mayhall JCTC 15, 1053 (2019)")
-        logger.info("")
-
-        # 1. use symmetric orthogonalization on the overlap matrix
-        symm_orth = symmetric_orthogonalization(overlap)
-
-        # 2. change the MO basis to be orthogonal and reasonably localized
-        mo_coeff_tmp = ElectronicIntegrals.einsum(
-            {"ij,jk->ik": ("+-",) * 3}, symm_orth, mo_coeff_occ, validate=False
-        )
-
-        # 3. select the active sector
-        mo_coeff_tmp, _ = mo_coeff_tmp.split(np.vsplit, [num_bf], validate=False)
-
-        # 4. use SVD to find the final rotation matrix
-        _, _, rot = ElectronicIntegrals.apply(
-            partial(np.linalg.svd, full_matrices=True),
-            mo_coeff_tmp,
-            multi=True,
-            validate=False,
-        )
-        rot_t = ElectronicIntegrals.apply(np.transpose, rot, validate=False)
-
-        nocc_a_alpha, nocc_a_beta = nocc_a
-        left, right = _split_elec_ints_per_spin(
-            rot_t, np.hsplit, [nocc_a_alpha], [nocc_a_beta]
-        )
-
-        return (
-            ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, left, validate=False
-            ),
-            ElectronicIntegrals.einsum(
-                {"ij,jk->ik": ("+-",) * 3}, mo_coeff_occ, right, validate=False
-            ),
-        )
-
 
 def _concentric_localization(
     overlap_pb_wb, projection_basis, mo_coeff_vir, num_bf, fock
@@ -897,23 +838,3 @@ def _concentric_localization(
         nvir_b_beta = mo_coeff_vir.beta["+-"].shape[1] - nvir_a_beta
 
     return mo_coeff_vir, (nvir_a_alpha, nvir_a_beta), (nvir_b_alpha, nvir_b_beta)
-
-
-def symmetric_orthogonalization(matrix: ElectronicIntegrals) -> ElectronicIntegrals:
-    """Performs the symmetric orthogonalization.
-
-    TODO.
-    """
-    eigval, eigvec = ElectronicIntegrals.apply(
-        np.linalg.eigh, matrix, multi=True, validate=False
-    )
-    eigval = ElectronicIntegrals.apply(
-        lambda arr: np.diag(np.sqrt(arr)), eigval, validate=False
-    )
-    return ElectronicIntegrals.einsum(
-        {"ik,kj,lj->il": ("+-",) * 4}, eigvec, eigval, eigvec
-    )
-    eigvals, eigvecs = np.linalg.eigh(matrix)
-    eigvals = np.diag(np.sqrt(eigvals))
-    # TODO: change to allow opt_einsum
-    return np.einsum("ik,kj,lj->il", eigvecs, eigvals, eigvecs)

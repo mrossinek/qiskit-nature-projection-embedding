@@ -25,7 +25,11 @@ from qiskit_nature.second_q.formats.qcschema_translator import (
 )
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
+
 from projection_embedding.projection_embedding import ProjectionEmbedding
+from projection_embedding.pyscf_pipek_mezey_partitioning import (
+    PySCFPipekMezeyPartitioning,
+)
 
 
 class TestProjectionEmbedding(unittest.TestCase):
@@ -385,45 +389,6 @@ class TestProjectionEmbedding(unittest.TestCase):
         overlap[np.abs(overlap) < 1e-12] = 0.0
         trafo = ProjectionEmbedding(14, 10, basis_trafo, overlap, 4, 4)
 
-        def _pipek_mezey(trafo, overlap, mo_coeff_occ, num_bf, nocc_a):
-            from pyscf.lo import PipekMezey
-
-            nocc_a = nocc_a[0]
-            nocc_b = (driver._mol.nelectron - 2 * nocc_a) // 2
-
-            pm = PipekMezey(driver._mol)
-            mo = pm.kernel(mo_coeff_occ.alpha["+-"], verbose=4)
-
-            nocc = mo.shape[1]
-            pop = np.zeros((nocc, 2))
-            for i in range(nocc):
-                col = mo[:, i]
-                dens = np.outer(col, col)
-                PS = np.dot(dens, overlap.alpha["+-"])
-
-                pop[i, 0] = np.trace(PS[:num_bf, :num_bf])
-                pop[i, 1] = np.trace(PS[num_bf:, num_bf:])
-
-            pop_order_1 = np.argsort(-1 * pop[:, 0])
-            pop_order_2 = np.argsort(-1 * pop[:, 1])
-
-            orbid_1 = pop_order_1[:nocc_a]
-            orbid_2 = pop_order_2[:nocc_b]
-
-            nao = driver._mol.nao
-            fragment_1 = np.zeros((nao, nocc_a))
-            fragment_2 = np.zeros((nao, nocc_b))
-
-            for i in range(nocc_a):
-                fragment_1[:, i] = mo[:, orbid_1[i]]
-            for i in range(nocc_b):
-                fragment_2[:, i] = mo[:, orbid_2[i]]
-
-            return (
-                ElectronicIntegrals.from_raw_integrals(fragment_1, validate=False),
-                ElectronicIntegrals.from_raw_integrals(fragment_2, validate=False),
-            )
-
         def _fock_build_a(trafo, density_a, density_b):
             density_tot = density_a + density_b
 
@@ -449,7 +414,7 @@ class TestProjectionEmbedding(unittest.TestCase):
 
             return fock_final, e_tot
 
-        trafo._spade_partition = partial(_pipek_mezey, trafo)
+        trafo.occupied_orbital_partitioning = PySCFPipekMezeyPartitioning(driver._mol)
         trafo._fock_build_a = partial(_fock_build_a, trafo)
 
         problem = trafo.transform(problem)

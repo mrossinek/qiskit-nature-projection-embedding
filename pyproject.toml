@@ -15,6 +15,7 @@ classifiers = [
 ]
 dependencies = [
     "qiskit-nature~=0.7.0",
+    "pyscf~=2.0",
 ]
 
 [build-system]
