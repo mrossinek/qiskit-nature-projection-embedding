@@ -21,8 +21,8 @@ import numpy as np
 
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 
-from .occupied_orbital_partitioning import OccupiedOrbitalPartitioning
-from .utils import split_elec_ints_per_spin
+from . import OccupiedOrbitalPartitioning
+from ..utils import split_elec_ints_per_spin
 
 logger = logging.getLogger(__name__)
 

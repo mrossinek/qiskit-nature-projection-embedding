@@ -27,7 +27,7 @@ from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
 
 from projection_embedding.projection_embedding import ProjectionEmbedding
-from projection_embedding.pyscf_pipek_mezey_partitioning import (
+from projection_embedding.occupied_orbital_partitioning import (
     PySCFPipekMezeyPartitioning,
 )
 

@@ -37,8 +37,10 @@ from qiskit_nature.second_q.properties import (
 
 from qiskit_nature.second_q.transformers import BaseTransformer, BasisTransformer
 
-from .occupied_orbital_partitioning import OccupiedOrbitalPartitioning
-from .spade_partitioning import SPADEPartitioning
+from .occupied_orbital_partitioning import (
+    OccupiedOrbitalPartitioning,
+    SPADEPartitioning,
+)
 from .utils import split_elec_ints_per_spin
 
 logger = logging.getLogger(__name__)

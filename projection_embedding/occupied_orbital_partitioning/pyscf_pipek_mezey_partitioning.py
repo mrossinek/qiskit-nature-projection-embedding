@@ -20,7 +20,7 @@ from pyscf.gto import Mole
 from pyscf.lo import PipekMezey
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 
-from .occupied_orbital_partitioning import OccupiedOrbitalPartitioning
+from . import OccupiedOrbitalPartitioning
 
 
 class PySCFPipekMezeyPartitioning(OccupiedOrbitalPartitioning):
