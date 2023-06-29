@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 class ConcentricLocalization(VirtualOrbitalLocalization):
     """TODO."""
 
+    def __init__(self, zeta: int = 1) -> None:
+        """TODO."""
+        self.zeta = zeta
+
     def localize(
         self,
         overlap_pb_wb: ElectronicIntegrals,
@@ -88,11 +92,9 @@ class ConcentricLocalization(VirtualOrbitalLocalization):
             {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir, v_kern, validate=False
         )
 
-        # TODO: make zeta configurable
-        zeta = 1
         mo_coeff_vir_cur = mo_coeff_vir_new
 
-        for _ in range(zeta - 1):
+        for _ in range(self.zeta - 1):
             # mo_coeff_vir_new is the working variable
             fock_cur_kern = ElectronicIntegrals.einsum(
                 {"ji,jk,kl->il": ("+-",) * 4},

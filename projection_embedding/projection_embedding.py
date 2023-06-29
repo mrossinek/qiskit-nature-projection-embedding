@@ -68,6 +68,10 @@ class ProjectionEmbedding(BaseTransformer):
         fock_builder: FockBuilder = HartreeFockBuilder(),
         occupied_orbital_partitioning: OccupiedOrbitalPartitioning = SPADEPartitioning(),
         virtual_orbital_localization: VirtualOrbitalPartitioning = ConcentricLocalization(),
+        scf_enable_diis: bool = True,
+        scf_convergence_threshold: float = 1e-7,
+        scf_drms_threshold: float = 1e-3,
+        scf_maximum_iterations: int = 50,
     ) -> None:
         """TODO."""
         self.num_electrons = num_electrons
@@ -110,6 +114,11 @@ class ProjectionEmbedding(BaseTransformer):
         self.fock_builder = fock_builder
         self.occupied_orbital_partitioning = occupied_orbital_partitioning
         self.virtual_orbital_localization = virtual_orbital_localization
+
+        self._scf_enable_diis = scf_enable_diis
+        self._scf_convergence_threshold = scf_convergence_threshold
+        self._scf_drms_threshold = scf_drms_threshold
+        self._scf_maximum_iterations = scf_maximum_iterations
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
         """TODO."""
@@ -260,17 +269,19 @@ class ProjectionEmbedding(BaseTransformer):
             mo_coeff_vir_ints, mo_coeff_projected, fock
         )
 
+        overlap_pb_wb, _ = self.overlap.split(
+            np.vsplit, [self.num_basis_functions], validate=False
+        )
+        projection_basis, _ = overlap_pb_wb.split(
+            np.hsplit, [self.num_basis_functions], validate=False
+        )
         (
             mo_coeff_vir_pb,
             (nvir_a_alpha, nvir_a_beta),
             (nvir_b_alpha, nvir_b_beta),
         ) = self.virtual_orbital_localization.localize(
-            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[
-                0
-            ],
-            self.overlap.split(np.vsplit, [self.num_basis_functions], validate=False)[
-                0
-            ].split(np.hsplit, [self.num_basis_functions], validate=False)[0],
+            overlap_pb_wb,
+            projection_basis,
             mo_coeff_vir_ints,
             self.num_basis_functions,
             fock,
@@ -438,14 +449,10 @@ class ProjectionEmbedding(BaseTransformer):
         self, fock, nocc_a_alpha, nocc_a_beta, density_a, density_b, identity, projector
     ):
         e_old = 0
-        # TODO: make these configurable
-        e_thres = 1e-7
-        max_iter = 50
         fock_list = []
         diis_error = []
 
-        # TODO: actually make this SCF loop a standalone method
-        for scf_iter in range(1, max_iter + 1):
+        for scf_iter in range(1, self._scf_maximum_iterations + 1):
             _, mo_coeff_a_full = ElectronicIntegrals.apply(
                 la.eigh, fock, self.overlap, multi=True, validate=False
             )
@@ -484,35 +491,44 @@ class ProjectionEmbedding(BaseTransformer):
                 + self.hamiltonian.nuclear_repulsion_energy
             )
 
-            diis_e = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-",) * 4}, fock, density_a, self.overlap
-            ) - ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-",) * 4}, self.overlap, density_a, fock
-            )
-            diis_e = ElectronicIntegrals.einsum(
-                {"ij,jk,kl->il": ("+-",) * 4}, projector, diis_e, projector
-            )
-
-            fock_list.append(fock)
-            diis_error.append(diis_e)
-            dRMS_a = np.mean(diis_e.one_body.alpha["+-"] ** 2) ** 0.5
-            dRMS_b = np.mean(diis_e.one_body.beta["+-"] ** 2) ** 0.5
-
             logger.info(
-                "SCF Iteration %s: Energy = %s dE = %s dRMS = %s %s",
+                "SCF Iteration %s: Energy = %s dE = %s",
                 scf_iter,
                 e_new_a,
                 e_new_a - e_old,
-                dRMS_a,
-                dRMS_b,
             )
 
+            converged = abs(e_new_a - e_old) < self._scf_convergence_threshold
+
+            if self._scf_enable_diis:
+                diis_e = ElectronicIntegrals.einsum(
+                    {"ij,jk,kl->il": ("+-",) * 4}, fock, density_a, self.overlap
+                ) - ElectronicIntegrals.einsum(
+                    {"ij,jk,kl->il": ("+-",) * 4}, self.overlap, density_a, fock
+                )
+                diis_e = ElectronicIntegrals.einsum(
+                    {"ij,jk,kl->il": ("+-",) * 4}, projector, diis_e, projector
+                )
+
+                fock_list.append(fock)
+                diis_error.append(diis_e)
+                dRMS_a = np.mean(diis_e.one_body.alpha["+-"] ** 2) ** 0.5
+                dRMS_b = np.mean(diis_e.one_body.beta["+-"] ** 2) ** 0.5
+
+                logger.info("dRMS = %s %s", dRMS_a, dRMS_b)
+
+                converged = (
+                    converged
+                    and dRMS_a < self._scf_drms_threshold
+                    and dRMS_b < self._scf_drms_threshold
+                )
+
             # SCF Converged?
-            if abs(e_new_a - e_old) < e_thres and (dRMS_a < 1e-3 and dRMS_b < 1e-3):
+            if converged:
                 break
             e_old = e_new_a
 
-            if scf_iter >= 2:
+            if self._scf_enable_diis and scf_iter >= 2:
                 # DIIS
 
                 diis_count = len(fock_list)
@@ -570,7 +586,7 @@ class ProjectionEmbedding(BaseTransformer):
 
                 fock = ElectronicIntegrals.from_raw_integrals(fock_a, h1_b=fock_b)
 
-            if scf_iter == max_iter:
+            if scf_iter == self._scf_maximum_iterations:
                 raise Exception("Maximum number of SCF iterations exceeded.")
 
         # NOTE: from now on fragment_a will no longer change!
