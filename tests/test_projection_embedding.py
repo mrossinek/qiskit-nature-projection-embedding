@@ -26,6 +26,7 @@ from qiskit_nature.second_q.formats.qcschema_translator import (
 from qiskit_nature.second_q.operators import ElectronicIntegrals
 from qiskit_nature.second_q.problems import ElectronicBasis
 
+from projection_embedding.fock_builders import PySCFDFTBuilder
 from projection_embedding.projection_embedding import ProjectionEmbedding
 from projection_embedding.occupied_orbital_partitioning import (
     PySCFPipekMezeyPartitioning,
@@ -311,33 +312,7 @@ class TestProjectionEmbedding(unittest.TestCase):
         overlap = driver._calc.get_ovlp()
         overlap[np.abs(overlap) < 1e-12] = 0.0
         trafo = ProjectionEmbedding(14, 10, basis_trafo, overlap, 4, 4)
-
-        def _fock_build_a(trafo, density_a, density_b):
-            density_tot = density_a + density_b
-
-            h_core = trafo.hamiltonian.electronic_integrals.one_body
-
-            pyscf_rho_a = np.asarray(density_a.trace_spin()["+-"])
-            pyscf_rho_tot = np.asarray(density_tot.trace_spin()["+-"])
-
-            pyscf_fock_a = driver._calc.get_fock(dm=pyscf_rho_a)
-            pyscf_fock_tot = driver._calc.get_fock(dm=pyscf_rho_tot)
-
-            e_low_level_a = driver._calc.energy_tot(dm=pyscf_rho_a)
-            e_low_level_tot = driver._calc.energy_tot(dm=pyscf_rho_tot)
-
-            fock_final = trafo.hamiltonian.fock(density_a)
-            h_core_a = h_core.alpha["+-"]
-            fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)
-            fock_final = ElectronicIntegrals.from_raw_integrals(
-                fock_final.alpha["+-"] + fock_delta
-            )
-
-            e_tot = e_low_level_tot - e_low_level_a
-
-            return fock_final, e_tot
-
-        trafo._fock_build_a = partial(_fock_build_a, trafo)
+        trafo.fock_builder = PySCFDFTBuilder(driver._calc)
 
         problem = trafo.transform(problem)
 
@@ -388,34 +363,8 @@ class TestProjectionEmbedding(unittest.TestCase):
         overlap = driver._calc.get_ovlp()
         overlap[np.abs(overlap) < 1e-12] = 0.0
         trafo = ProjectionEmbedding(14, 10, basis_trafo, overlap, 4, 4)
-
-        def _fock_build_a(trafo, density_a, density_b):
-            density_tot = density_a + density_b
-
-            h_core = trafo.hamiltonian.electronic_integrals.one_body
-
-            pyscf_rho_a = np.asarray(density_a.trace_spin()["+-"])
-            pyscf_rho_tot = np.asarray(density_tot.trace_spin()["+-"])
-
-            pyscf_fock_a = driver._calc.get_fock(dm=pyscf_rho_a)
-            pyscf_fock_tot = driver._calc.get_fock(dm=pyscf_rho_tot)
-
-            e_low_level_a = driver._calc.energy_tot(dm=pyscf_rho_a)
-            e_low_level_tot = driver._calc.energy_tot(dm=pyscf_rho_tot)
-
-            fock_final = trafo.hamiltonian.fock(density_a)
-            h_core_a = h_core.alpha["+-"]
-            fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)
-            fock_final = ElectronicIntegrals.from_raw_integrals(
-                fock_final.alpha["+-"] + fock_delta
-            )
-
-            e_tot = e_low_level_tot - e_low_level_a
-
-            return fock_final, e_tot
-
+        trafo.fock_builder = PySCFDFTBuilder(driver._calc)
         trafo.occupied_orbital_partitioning = PySCFPipekMezeyPartitioning(driver._mol)
-        trafo._fock_build_a = partial(_fock_build_a, trafo)
 
         problem = trafo.transform(problem)
 

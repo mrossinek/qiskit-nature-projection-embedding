@@ -37,6 +37,7 @@ from qiskit_nature.second_q.properties import (
 
 from qiskit_nature.second_q.transformers import BaseTransformer, BasisTransformer
 
+from .fock_builders import FockBuilder, HartreeFockBuilder
 from .occupied_orbital_partitioning import (
     OccupiedOrbitalPartitioning,
     SPADEPartitioning,
@@ -60,6 +61,7 @@ class ProjectionEmbedding(BaseTransformer):
         num_active_electrons: int | tuple[int, int] | None = None,
         num_active_orbitals: int | None = None,
         *,
+        fock_builder: FockBuilder = HartreeFockBuilder(),
         occupied_orbital_partitioning: OccupiedOrbitalPartitioning = SPADEPartitioning(),
     ) -> None:
         """TODO."""
@@ -100,6 +102,7 @@ class ProjectionEmbedding(BaseTransformer):
         self.basis_transformer = basis_transformer
         self.overlap = ElectronicIntegrals.from_raw_integrals(overlap_matrix)
 
+        self.fock_builder = fock_builder
         self.occupied_orbital_partitioning = occupied_orbital_partitioning
 
     def transform(self, problem: BaseProblem) -> BaseProblem:
@@ -189,7 +192,9 @@ class ProjectionEmbedding(BaseTransformer):
         if density_b.beta.is_empty():
             density_b.beta = density_b.alpha
 
-        fock, e_low_level = self._fock_build_a(density_a, density_b)
+        fock, e_low_level = self.fock_builder.build(
+            self.hamiltonian, density_a, density_b
+        )
 
         e_new_a_ints = 0.5 * ElectronicIntegrals.einsum(
             {"ij,ji": ("+-", "+-", "")},
@@ -227,7 +232,9 @@ class ProjectionEmbedding(BaseTransformer):
         )
 
         # post convergence wrapup
-        fock, e_low_level = self._fock_build_a(density_a, density_b)
+        fock, e_low_level = self.fock_builder.build(
+            self.hamiltonian, density_a, density_b
+        )
 
         mu = 1.0e8
         fock -= mu * ElectronicIntegrals.einsum(
@@ -446,7 +453,9 @@ class ProjectionEmbedding(BaseTransformer):
                 {"ij,kj->ik": ("+-",) * 3}, fragment_a, fragment_a
             )
 
-            fock, e_low_level = self._fock_build_a(density_a, density_b)
+            fock, e_low_level = self.fock_builder.build(
+                self.hamiltonian, density_a, density_b
+            )
 
             projector = identity - ElectronicIntegrals.einsum(
                 {"ij,jk->ik": ("+-",) * 3}, self.overlap, density_b
@@ -622,30 +631,6 @@ class ProjectionEmbedding(BaseTransformer):
         )
 
         return mo_coeff_vir_ints
-
-    def _fock_build_a(self, density_a: ElectronicDensity, density_b: ElectronicDensity):
-        density_tot = density_a + density_b
-
-        h_core = self.hamiltonian.electronic_integrals.one_body
-
-        fock_a = self.hamiltonian.fock(density_a)
-        fock_tot = self.hamiltonian.fock(density_tot)
-
-        e_low_level = 0.5 * ElectronicIntegrals.einsum(
-            {"ij,ij": ("+-", "+-", "")}, fock_tot + h_core, density_tot
-        )
-        e_low_level -= 0.5 * ElectronicIntegrals.einsum(
-            {"ij,ij": ("+-", "+-", "")}, fock_a + h_core, density_a
-        )
-
-        fock_final = self.hamiltonian.fock(density_a)
-        fock_final += (fock_tot - h_core) - (fock_a - h_core)
-
-        return fock_final, (
-            e_low_level.alpha.get("", 0.0)
-            + e_low_level.beta.get("", 0.0)
-            + e_low_level.beta_alpha.get("", 0.0)
-        )
 
 
 def _concentric_localization(
