@@ -51,6 +51,7 @@ class PySCFDFTBuilder(FockBuilder):
         e_low_level_a = self.scf.energy_tot(dm=pyscf_rho_a)
         e_low_level_tot = self.scf.energy_tot(dm=pyscf_rho_tot)
 
+        # TODO: support unrestricted spin cases
         fock_final = hamiltonian.fock(density_a)
         h_core_a = h_core.alpha["+-"]
         fock_delta = (pyscf_fock_tot - h_core_a) - (pyscf_fock_a - h_core_a)

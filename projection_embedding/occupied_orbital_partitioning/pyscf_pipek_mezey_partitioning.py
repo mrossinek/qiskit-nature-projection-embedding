@@ -38,6 +38,7 @@ class PySCFPipekMezeyPartitioning(OccupiedOrbitalPartitioning):
         num_occ_fragment: tuple[int, int],
     ) -> tuple[ElectronicIntegrals, ElectronicIntegrals]:
         """TODO."""
+        # TODO: support unrestricted spin cases
         nocc_a = num_occ_fragment[0]
         nocc_b = (self.molecule.nelectron - 2 * nocc_a) // 2
 
