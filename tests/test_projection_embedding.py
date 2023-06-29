@@ -380,7 +380,6 @@ class TestProjectionEmbedding(unittest.TestCase):
         driver.run_pyscf()
         qcschema = driver.to_qcschema()
         problem = driver.to_problem(basis=ElectronicBasis.AO, include_dipole=False)
-        print(problem.reference_energy)
         basis_trafo = get_ao_to_mo_from_qcschema(qcschema)
         overlap = driver._calc.get_ovlp()
         overlap[np.abs(overlap) < 1e-12] = 0.0
@@ -405,16 +404,11 @@ class TestProjectionEmbedding(unittest.TestCase):
                 pop[i, 0] = np.trace(PS[:num_bf, :num_bf])
                 pop[i, 1] = np.trace(PS[num_bf:, num_bf:])
 
-            print(nocc, nocc_a, nocc_b, num_bf)
-
             pop_order_1 = np.argsort(-1 * pop[:, 0])
             pop_order_2 = np.argsort(-1 * pop[:, 1])
 
             orbid_1 = pop_order_1[:nocc_a]
             orbid_2 = pop_order_2[:nocc_b]
-
-            print("orbitals assigned to fragment 1:", orbid_1)
-            print("orbitals assigned to fragment 2:", orbid_2)
 
             nao = driver._mol.nao
             fragment_1 = np.zeros((nao, nocc_a))
