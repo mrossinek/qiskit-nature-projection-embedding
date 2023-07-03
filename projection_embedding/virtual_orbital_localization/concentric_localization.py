@@ -19,6 +19,7 @@ from functools import partial
 
 import numpy as np
 
+from opt_einsum import contract
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
 from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
 
@@ -169,67 +170,25 @@ class ConcentricLocalization(VirtualOrbitalLocalization):
             {"ij,jk->ik": ("+-",) * 3}, mo_coeff_vir_new, eigvec, validate=False
         )
 
-        mo_coeff_vir_kern_alpha = mo_coeff_vir_kern.alpha
-        if (
-            "+-" in mo_coeff_vir_kern_alpha
-            and mo_coeff_vir_kern_alpha["+-"].shape[1] != 0
-        ):
-            einsummed = PolynomialTensor.einsum(
-                {"ji,jk,kl->il": ("+-",) * 4},
-                mo_coeff_vir_kern_alpha,
-                fock.alpha,
-                mo_coeff_vir_kern_alpha,
-                validate=False,
-            )
+        def _func(moc_vir_kern, _fock, moc_vir_new):
+            if moc_vir_kern.shape[1] != 0:
+                einsummed = contract("ji,jk,kl->il", moc_vir_kern, _fock, moc_vir_kern)
 
-            _, eigvec = np.linalg.eigh(einsummed["+-"])
+                _, eigvec = np.linalg.eigh(einsummed)
 
-            mo_coeff_vir_kern_alpha = PolynomialTensor.einsum(
-                {"ij,jk->ik": ("+-",) * 3},
-                mo_coeff_vir_kern_alpha,
-                PolynomialTensor({"+-": eigvec}, validate=False),
-                validate=False,
-            )
+                moc_vir_kern = contract("ij,jk->ik", moc_vir_kern, eigvec)
 
-            mo_coeff_vir_alpha = PolynomialTensor.stack(
-                np.hstack,
-                (mo_coeff_vir_new.alpha, mo_coeff_vir_kern_alpha),
-                validate=False,
-            )
-        else:
-            mo_coeff_vir_alpha = mo_coeff_vir_new.alpha
+                return np.hstack([moc_vir_new, moc_vir_kern])
 
-        mo_coeff_vir_kern_beta = mo_coeff_vir_kern.beta
-        if (
-            "+-" in mo_coeff_vir_kern_beta
-            and mo_coeff_vir_kern_beta["+-"].shape[1] != 0
-        ):
-            einsummed = PolynomialTensor.einsum(
-                {"ji,jk,kl->il": ("+-",) * 4},
-                mo_coeff_vir_kern_beta,
-                fock.beta,
-                mo_coeff_vir_kern_beta,
-                validate=False,
-            )
+            return moc_vir_new
 
-            _, eigvec = np.linalg.eigh(einsummed["+-"])
-
-            mo_coeff_vir_kern_beta = PolynomialTensor.einsum(
-                {"ij,jk->ik": ("+-",) * 3},
-                mo_coeff_vir_kern_beta,
-                PolynomialTensor({"+-": eigvec}, validate=False),
-                validate=False,
-            )
-
-            mo_coeff_vir_beta = PolynomialTensor.stack(
-                np.hstack,
-                (mo_coeff_vir_new.beta, mo_coeff_vir_kern_beta),
-                validate=False,
-            )
-        else:
-            mo_coeff_vir_beta = mo_coeff_vir_new.beta
-
-        mo_coeff_vir = ElectronicIntegrals(mo_coeff_vir_alpha, mo_coeff_vir_beta)
+        mo_coeff_vir = ElectronicIntegrals.apply(
+            _func,
+            mo_coeff_vir_kern,
+            fock,
+            mo_coeff_vir_new,
+            validate=False,
+        )
 
         nvir_a_alpha = mo_coeff_vir_new.alpha["+-"].shape[1]
         nvir_b_alpha = mo_coeff_vir.alpha["+-"].shape[1] - nvir_a_alpha

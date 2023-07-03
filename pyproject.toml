@@ -16,6 +16,7 @@ classifiers = [
 dependencies = [
     "qiskit-nature~=0.7.0",
     "pyscf~=2.0",
+    "opt-einsum~=3.3.0",
 ]
 
 [build-system]
