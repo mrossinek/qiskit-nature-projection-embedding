@@ -9,7 +9,7 @@ You can simply install the contents of this repository after cloning it:
 pip install .
 ```
 
-:warning: You need to install Qiskit Nature from this branch https://github.com/qiskit-community/qiskit-nature/pull/1215.
+:warning: You need to install Qiskit Nature 0.7 which is still under development on its `main` branch.
 
 ## Usage
 

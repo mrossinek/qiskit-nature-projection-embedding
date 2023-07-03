@@ -157,17 +157,6 @@ class ProjectionEmbedding(BaseTransformer):
         logger.info("")
 
         self.hamiltonian = problem.hamiltonian
-        # TODO: hamiltonian.fock does not work as expected for unrestricted spin systems because the
-        # hamiltonian is in the AO basis and, thus, has no beta or beta_alpha 2-body terms
-        # associated with it yet...
-        # NOTE: this will be fixed by https://github.com/qiskit-community/qiskit-nature/pull/1216
-        if not self.basis_transformer.coefficients.beta.is_empty():
-            self.hamiltonian.electronic_integrals.beta = (
-                self.hamiltonian.electronic_integrals.alpha
-            )
-            self.hamiltonian.electronic_integrals.beta_alpha = (
-                self.hamiltonian.electronic_integrals.two_body.alpha
-            )
 
         if isinstance(self.num_electrons, tuple):
             nocc_a_alpha, nocc_a_beta = self.num_electrons
