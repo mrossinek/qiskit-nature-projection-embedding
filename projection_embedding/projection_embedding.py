@@ -420,9 +420,9 @@ class ProjectionEmbedding(BaseTransformer):
         result = ElectronicStructureProblem(new_hamiltonian)
         result.num_particles = (nocc_a_alpha, nocc_a_beta)
         result.num_spatial_orbitals = nmo_a
-        result.orbital_energy = np.diag(orbital_energy.alpha["+-"])
-        if not orbital_energy.beta.is_empty():
-            result.orbital_energy_b = np.diag(orbital_energy.beta["+-"])
+        result.orbital_energies = np.diag(orbital_energy.alpha["+-"])
+        if not orbital_energies.beta.is_empty():
+            result.orbital_energies_b = np.diag(orbital_energy.beta["+-"])
 
         for prop in problem.properties:
             if isinstance(prop, (AngularMomentum, Magnetization, ParticleNumber)):
