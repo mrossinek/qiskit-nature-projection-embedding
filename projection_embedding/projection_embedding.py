@@ -422,7 +422,7 @@ class ProjectionEmbedding(BaseTransformer):
         result.num_particles = (nocc_a_alpha, nocc_a_beta)
         result.num_spatial_orbitals = nmo_a
         result.orbital_energies = np.diag(orbital_energy.alpha["+-"])
-        if not orbital_energies.beta.is_empty():
+        if not orbital_energy.beta.is_empty():
             result.orbital_energies_b = np.diag(orbital_energy.beta["+-"])
 
         for prop in problem.properties:
