@@ -84,7 +84,9 @@ class PySCFPipekMezeyPartitioning(OccupiedOrbitalPartitioning):
             for i in range(nocc):
                 col = mo[:, i]
                 dens = np.outer(col, col)
-                PS = np.dot(dens, overlap.beta["+-"])
+                # NOTE: even though this is the beta-spin case, the overlap only has alpha
+                # components (because they are identical)
+                PS = np.dot(dens, overlap.alpha["+-"])
 
                 pop[i, 0] = np.trace(PS[:num_bf, :num_bf])
                 pop[i, 1] = np.trace(PS[num_bf:, num_bf:])
