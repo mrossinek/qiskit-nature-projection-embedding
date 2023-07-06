@@ -38,9 +38,9 @@ class PySCFPipekMezeyPartitioning(OccupiedOrbitalPartitioning):
         num_occ_fragment: tuple[int, int],
     ) -> tuple[ElectronicIntegrals, ElectronicIntegrals]:
         """TODO."""
-        # TODO: support unrestricted spin cases
+        # alpha spin
         nocc_a = num_occ_fragment[0]
-        nocc_b = (self.molecule.nelectron - 2 * nocc_a) // 2
+        nocc_b = (self.molecule.nelectron - sum(num_occ_fragment)) // 2
 
         pm = PipekMezey(self.molecule)
         mo = pm.kernel(mo_coeff_occ.alpha["+-"], verbose=4)
@@ -62,15 +62,53 @@ class PySCFPipekMezeyPartitioning(OccupiedOrbitalPartitioning):
         orbid_2 = pop_order_2[:nocc_b]
 
         nao = self.molecule.nao
-        fragment_1 = np.zeros((nao, nocc_a))
-        fragment_2 = np.zeros((nao, nocc_b))
+        fragment_1_alpha = np.zeros((nao, nocc_a))
+        fragment_2_alpha = np.zeros((nao, nocc_b))
 
         for i in range(nocc_a):
-            fragment_1[:, i] = mo[:, orbid_1[i]]
+            fragment_1_alpha[:, i] = mo[:, orbid_1[i]]
         for i in range(nocc_b):
-            fragment_2[:, i] = mo[:, orbid_2[i]]
+            fragment_2_alpha[:, i] = mo[:, orbid_2[i]]
+
+        fragment_1_beta = None
+        fragment_2_beta = None
+        if "+-" in mo_coeff_occ.beta:
+            # beta spin
+            nocc_a = num_occ_fragment[1]
+            nocc_b = (self.molecule.nelectron - sum(num_occ_fragment)) // 2
+
+            mo = pm.kernel(mo_coeff_occ.beta["+-"], verbose=4)
+
+            nocc = mo.shape[1]
+            pop = np.zeros((nocc, 2))
+            for i in range(nocc):
+                col = mo[:, i]
+                dens = np.outer(col, col)
+                PS = np.dot(dens, overlap.beta["+-"])
+
+                pop[i, 0] = np.trace(PS[:num_bf, :num_bf])
+                pop[i, 1] = np.trace(PS[num_bf:, num_bf:])
+
+            pop_order_1 = np.argsort(-1 * pop[:, 0])
+            pop_order_2 = np.argsort(-1 * pop[:, 1])
+
+            orbid_1 = pop_order_1[:nocc_a]
+            orbid_2 = pop_order_2[:nocc_b]
+
+            nao = self.molecule.nao
+            fragment_1_beta = np.zeros((nao, nocc_a))
+            fragment_2_beta = np.zeros((nao, nocc_b))
+
+            for i in range(nocc_a):
+                fragment_1_beta[:, i] = mo[:, orbid_1[i]]
+            for i in range(nocc_b):
+                fragment_2_beta[:, i] = mo[:, orbid_2[i]]
 
         return (
-            ElectronicIntegrals.from_raw_integrals(fragment_1, validate=False),
-            ElectronicIntegrals.from_raw_integrals(fragment_2, validate=False),
+            ElectronicIntegrals.from_raw_integrals(
+                fragment_1_alpha, h1_b=fragment_1_beta, validate=False
+            ),
+            ElectronicIntegrals.from_raw_integrals(
+                fragment_2_alpha, h1_b=fragment_2_beta, validate=False
+            ),
         )
