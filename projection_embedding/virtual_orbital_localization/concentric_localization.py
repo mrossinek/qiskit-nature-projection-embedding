@@ -19,7 +19,6 @@ from functools import partial
 
 import numpy as np
 
-from opt_einsum import contract
 from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
 from qiskit_nature.second_q.operators import ElectronicIntegrals, PolynomialTensor
 
@@ -172,11 +171,15 @@ class ConcentricLocalization(VirtualOrbitalLocalization):
 
         def _func(moc_vir_kern, _fock, moc_vir_new):
             if moc_vir_kern.shape[1] != 0:
-                einsummed = contract("ji,jk,kl->il", moc_vir_kern, _fock, moc_vir_kern)
+                einsummed = np.einsum(
+                    "ji,jk,kl->il", moc_vir_kern, _fock, moc_vir_kern, optimize=True
+                )
 
                 _, eigvec = np.linalg.eigh(einsummed)
 
-                moc_vir_kern = contract("ij,jk->ik", moc_vir_kern, eigvec)
+                moc_vir_kern = np.einsum(
+                    "ij,jk->ik", moc_vir_kern, eigvec, optimize=True
+                )
 
                 return np.hstack([moc_vir_new, moc_vir_kern])
 
