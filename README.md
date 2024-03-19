@@ -1,6 +1,7 @@
 # Projection Embedding using Qiskit Nature
 
 This repository contains the latest prototype implementation of the Projection-based embedding using Qiskit Nature.
+It is not actively maintained and makes no guarantees of being up-to-date with the latest Qiskit developments.
 
 ## Installation
 
@@ -9,7 +10,7 @@ You can simply install the contents of this repository after cloning it:
 pip install .
 ```
 
-:warning: You need to install Qiskit Nature 0.7 which is still under development on its `main` branch.
+This code only guarantees to work with Qiskit Nature 0.7.
 
 ## Usage
 
